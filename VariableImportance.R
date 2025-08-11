@@ -2,13 +2,9 @@ set.seed(52245)
 setwd('C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles')
 library(MachineShop)
 library(recipes)
-library(pander)
-library(parallel)
-library(foreach)
-library(doParallel)
 source('C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles/AdHocAbsStacked.R')
-library(lubridate)
-library(rstan)
+
+## choose response to provide variable importance for
 outcome <- 'arcsin'
 
 ## load model 
@@ -19,9 +15,11 @@ strt <- Sys.time()
 loglik_metric <- make_loglikelihood_MLMetric(fit$super_fit$data$link_function,
                                              fit$super_fit$data$final_fit$tau^(1+(outcome == 'log' | outcome == 'overtime')),# tau^2 for other distr. besides gaussian
                                              T)
-## feature reduc vars
+## variables to ignore
 load('no_featreduc_vars.RData')
 no_featreduc_vars <- no_featreduc_vars[!(no_featreduc_vars == 'numberGameTeamSeason.x')]
+
+## run permutation importance with 4 repeats, log-likelihood as response
 vrpm <-
   varimp(fit,
          metric = loglik_metric,
@@ -35,9 +33,3 @@ save(vrpm,
               ".RData"))
 fn <- Sys.time()
 print(strt - fn)
-
-# permuted psuedo-Wilk's test, with BH adjustment
-pvals <- p.adjust((1-pchisq(vrpm$`Permute.mean.log-likelihood`, df = 1)), 'BH')
-passes_chi2 <- rownames(vrpm)[pvals <=1 & vrpm > 1e-8]
-
-save(passes_chi2, file = paste0(outcome,'_vars2keep.RData'))
