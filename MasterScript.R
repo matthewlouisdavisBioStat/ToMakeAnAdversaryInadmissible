@@ -87,7 +87,7 @@ library(dplyr)
 # smtp <- server(host = "smtp.gmail.com",
 #                port = 465,
 #                username = "matthewlouisdavis@gmail.com",
-#                password = "yllekdurgmphuyzm")
+#                password = "<>")
 # smtp(email, verbose = F)
 # rm(list = ls())
 
@@ -110,6 +110,7 @@ email <- envelope() %>%
 smtp <- server(host = "smtp.gmail.com",
                port = 465,
                username = "matthewlouisdavis@gmail.com",
-               password = "yllekdurgmphuyzm")
+               password = "<>")
 smtp(email, verbose = F)
+
 rm(list = ls())
