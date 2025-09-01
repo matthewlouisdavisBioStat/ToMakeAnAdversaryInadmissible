@@ -34,7 +34,7 @@ The history of points bet bets placed as used for visualizing profit over time i
 
 ## PriorDistributionAnalysis
 
-Provides brief code to "estimate" prior distribution parameters for Vegas using data pulled from 2017-2020 seasons that appear in PredictAndLoadNBA_2024.R. Code for prior distribution analysis last updated in 2025.
+Provides brief code to "estimate" prior distribution parameters for Vegas using data pulled from 2017-2020 seasons that appear in PredictAndLoadNBA_2024.R. Code for prior distribution analysis was last updated in 2025.
 
 # First Time Users
 
