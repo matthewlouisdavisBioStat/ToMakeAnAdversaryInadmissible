@@ -7,7 +7,7 @@ This project provides exhaustive code for using Vegas's historical performance a
 When called, will execute the full pipeline from data processing to model training to making predictions and emailing decision rules. 
 
 ## PredictAndLoadNBA_2024.R
-This code will automatically pull in data from NBA games and process it, and (optionally) take trained stacked models and posterior inference to make predictions and decision rules for future games. If set up correctly, it will automatically identify the games for the next night, or return two arbitrary games instead for compatibility. 
+This code will automatically pull in data from NBA games and process it, and (optionally) take trained stacked models and posterior inference to make predictions and decision rules for future games. If set up correctly, it will automatically identify the games for the next night, or return two arbitrary games instead for compatibility. Besides formatting, documentation, and changes in priors for Vegas, the structure has not changed since 2024. 
 
 ## PrepDataForNBA.R
 This code processes raw data pulled from websites and constructs features from them.
@@ -31,6 +31,10 @@ Bets are only replaced if the redundant set of models for each response are in a
 Contains variable importance plots and example output emailed to users for making decisions. The decisions are read off such that, given vegas lines, a certain type of bet (i.e. over, under, or home/away) is recommended for over-unders, spreads, and moneylines.
 
 The history of points bet bets placed as used for visualizing profit over time is also available in "PointsBetCleaned.xlsx". 
+
+## PriorDistributionAnalysis
+
+Provides brief code to "estimate" prior distribution parameters for Vegas using data pulled from 2017-2020 seasons that appear in PredictAndLoadNBA_2024.R. Code for prior distribution analysis last updated in 2025.
 
 # First Time Users
 
