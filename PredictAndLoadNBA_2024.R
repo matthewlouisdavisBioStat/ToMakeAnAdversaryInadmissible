@@ -1057,8 +1057,8 @@ load('stacked_stan_log.RData')
 dr <- stacked_stan$draws()
 posterior_draws <- 
   cbind(1,
-        c(as.data.frame(dr[,,dim(dr)[3]])[-c(1:2000),1],
-          as.data.frame(dr[,,dim(dr)[3]])[-c(1:2000),2]))
+        (c(as.data.frame(dr[,,dim(dr)[3]])[-c(1:2000),1],
+           as.data.frame(dr[,,dim(dr)[3]])[-c(1:2000),2])/mean(my_preds_total)))
 # posterior_draws <- cbind(1,
 #                       c(stacked_stan@sim$samples[[1]]$sigma_etahat[-c(1:2000)],
 #                         stacked_stan@sim$samples[[2]]$sigma_etahat[-c(1:2000)]))
@@ -1666,3 +1666,4 @@ print(nd - strt)
 
 
 }
+
