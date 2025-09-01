@@ -1,5 +1,4 @@
-
-for(i in list.files('C:/Users/defgi/Documents/AbsolutelyStacked/R')){
+for(i in list.files('./Stacking')){
   source(paste0(
-    'C:/Users/defgi/Documents/AbsolutelyStacked/R/',i))
+    './Stacking/',i))
 }
