@@ -1,5 +1,5 @@
 
-for(i in list.files('Z:/Dissertation/Stacking/R')){
+for(i in list.files('./Stacking/R')){
   source(paste0(
-    'Z:/Dissertation/Stacking/R/',i))
+    './Stacking/R/',i))
 }
