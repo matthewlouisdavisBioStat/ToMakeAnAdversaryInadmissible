@@ -6,7 +6,8 @@
   ## ## Setup ## ## 
 # 
 strt <- Sys.time()
-for(k in paste0('./Stacking/',c('glmer_constrained.R', 
+for(k in paste0('./Stacking/',c(
+           'glmer_constrained.R', 
            'HelperFunctions.R', 
            'make_dummy_Z_and_sigmalist.R',
            'make_glmerStackedModel.R', 
@@ -23,8 +24,8 @@ for(k in paste0('./Stacking/',c('glmer_constrained.R',
 ## NBA schedule for today and matchups
 ################################################################################
 
-sched <- nbastatR::seasons_schedule(seasons = 2025)
-sched[sched$dateGame == as.character(Sys.Date()),]
+#sched <- nbastatR::seasons_schedule(seasons = 2025)
+#sched[sched$dateGame == as.character(Sys.Date()),]
 date <- as.character(Sys.Date())
 
   url = "https://cdn.nba.com/static/json/staticData/scheduleLeagueV2_1.json"
@@ -49,7 +50,11 @@ date <- as.character(Sys.Date())
       sched_subs <- rbind(sched_subs,
               sched_dat[substr(sched_dat$gameDateUTC,1,10) == 
                              as.character(Sys.Date()+1),])
-    }
+     }
+     if(nrow(sched_subs) <= 1){
+      warning("Using first game for dummy purposes")
+      sched_subs <- sched_dat[1:2,]
+     }
     sched_subs$slugMatchup <- paste0(sched_subs$awayTeam.teamTricode," @ ", 
                                      sched_subs$homeTeam.teamTricode)
 
@@ -158,7 +163,7 @@ if(length(ids) > 0) {
           assign_to_environment = FALSE
         )$dataBoxScore %>%
           as.data.frame()
-      }, timeout = 11, onTimeout = "error")
+      }, timeout = 25000, onTimeout = "silent")
     }, silent = TRUE)
     if (class(bs_temp) == "data.frame") {
       bs <- bind_rows(bs, bs_temp)
@@ -195,7 +200,7 @@ if(length(ids) > 0) {
           assign_to_environment = FALSE
         )$dataBoxScore %>%
           as.data.frame()
-      }, timeout = 11, onTimeout = "error")
+      }, timeout = 25000, onTimeout = "silent")
     }, silent = TRUE)
     if (class(bs_temp) == "data.frame") {
       bs <- bind_rows(bs, bs_temp)
@@ -231,7 +236,7 @@ if(length(ids) > 0) {
           assign_to_environment = FALSE
         )$dataBoxScore %>%
           as.data.frame()
-      }, timeout = 11, onTimeout = "error")
+      }, timeout = 25000, onTimeout = "silent")
     }, silent = TRUE)
     if (class(bs_temp) == "data.frame") {
       bs <- bind_rows(bs, bs_temp)
@@ -267,7 +272,7 @@ if(length(ids) > 0) {
           assign_to_environment = FALSE
         )$dataBoxScore %>%
           as.data.frame()
-      }, timeout = 11, onTimeout = "error")
+      }, timeout = 25000, onTimeout = "silent")
     }, silent = TRUE)
     if (class(bs_temp) == "data.frame") {
       bs <- bind_rows(bs, bs_temp)
@@ -304,7 +309,7 @@ if(length(ids) > 0) {
           assign_to_environment = FALSE
         )$dataBoxScore %>%
           as.data.frame()
-      }, timeout = 11, onTimeout = "error")
+      }, timeout = 25000, onTimeout = "silent")
     }, silent = TRUE)
     if (class(bs_temp) == "data.frame") {
       bs <- bind_rows(bs, bs_temp)
@@ -862,11 +867,17 @@ vegas_preds_per48 <- vegas_preds*(48/avg_time)
 
 ## Load model and posterior draws of variance parameters
 load('stacked_stan_gaussian.RData')
-posterior_draws <- cbind(
-  c(stacked_stan@sim$samples[[1]]$dispersion[-c(1:2000)],
-    stacked_stan@sim$samples[[2]]$dispersion[-c(1:2000)]),
-  c(stacked_stan@sim$samples[[1]]$sigmaSq_etahat[-c(1:2000)],
-    stacked_stan@sim$samples[[2]]$sigmaSq_etahat[-c(1:2000)]))
+dr <- stacked_stan$draws()
+posterior_draws <- 
+  cbind(c(as.data.frame(dr[,,2])[-c(1:2000),1],
+          as.data.frame(dr[,,2])[-c(1:2000),2]),
+        c(as.data.frame(dr[,,3])[-c(1:2000),1],
+          as.data.frame(dr[,,3])[-c(1:2000),1]))
+# posterior_draws <- cbind(
+#   c(stacked_stan@sim$samples[[1]]$dispersion[-c(1:2000)],
+#     stacked_stan@sim$samples[[2]]$dispersion[-c(1:2000)]),
+#   c(stacked_stan@sim$samples[[1]]$sigmaSq_etahat[-c(1:2000)],
+#     stacked_stan@sim$samples[[2]]$sigmaSq_etahat[-c(1:2000)]))
 
 ## Estimate of correlation
 rho <-  0.8178977
@@ -925,10 +936,14 @@ posterior_predictive_linear <- foreach(i = 1:nrow(posterior_draws),
 ################################################################################
 
 load('stacked_stan_overtime.RData')
+dr <- stacked_stan$draws()
 posterior_draws <- 
-  cbind(c(stacked_stan@sim$samples[[1]]$sigma_etahat[-c(1:2000)],
-  stacked_stan@sim$samples[[2]]$sigma_etahat[-c(1:2000)]))
-rm(stacked_stan)
+  cbind(c(as.data.frame(dr[,,dim(dr)[3]])[-c(1:2000),1],
+          as.data.frame(dr[,,dim(dr)[3]])[-c(1:2000),1]))
+# posterior_draws <- 
+#   cbind(c(stacked_stan@sim$samples[[1]]$sigma_etahat[-c(1:2000)],
+#   stacked_stan@sim$samples[[2]]$sigma_etahat[-c(1:2000)]))
+rm(stacked_stan, dr)
 my_preds <- ot_preds[,2] + ot_preds[,3]
 vegas_preds_ot <- 0.05800569 
 sigmaSq0 <- 1/(16223*vegas_preds_ot * (1 - vegas_preds_ot))
@@ -1039,9 +1054,14 @@ sigmaSq0s <- 0.06914059^2  -  1/(stacked_model$super_fit$data$final_fit$tau^2 *
 ## posterior distributions for parameters of interest
 load('stacked_stan_log.RData')
 #stacked_stan <- stacked$stacked_stan
-posterior_draws <- cbind(1,
-                      c(stacked_stan@sim$samples[[1]]$sigma_etahat[-c(1:2000)],
-                        stacked_stan@sim$samples[[2]]$sigma_etahat[-c(1:2000)]))
+dr <- stacked_stan$draws()
+posterior_draws <- 
+  cbind(1,
+        c(as.data.frame(dr[,,dim(dr)[3]])[-c(1:2000),1],
+          as.data.frame(dr[,,dim(dr)[3]])[-c(1:2000),2]))
+# posterior_draws <- cbind(1,
+#                       c(stacked_stan@sim$samples[[1]]$sigma_etahat[-c(1:2000)],
+#                         stacked_stan@sim$samples[[2]]$sigma_etahat[-c(1:2000)]))
 my_preds_pois <- my_preds-log(tau^2)
 vegas_preds_pois <- log(vegas_preds)-log(tau^2)
 ## extracted from prior analysis - the estimated correlation coefficient
@@ -1171,13 +1191,13 @@ colnames(final_overunder) <-
                      "DateBet")
 
 ## Save history of decision rules
-past_data <- read.csv("history_of_bets2024_overunder.csv",
-                      stringsAsFactors = F)
-rownames(final_overunder) <- NULL
-colnames(past_data) <- colnames(final_overunder)
-write.csv(unique(rbind(past_data,final_overunder)),
-          file = "history_of_bets2024_overunder.csv",
-                       row.names = F)
+# past_data <- read.csv("history_of_bets2024_overunder.csv",
+#                       stringsAsFactors = F)
+# rownames(final_overunder) <- NULL
+# colnames(past_data) <- colnames(final_overunder)
+# write.csv(unique(rbind(past_data,final_overunder)),
+#           file = "history_of_bets2024_overunder.csv",
+#                        row.names = F)
 
 cat("\n\n-----------------------------------------\n\n")
 
@@ -1212,11 +1232,12 @@ if(sigmaSq0 < 0){
 ## extract posterior draws of variance components
 rm(stacked_model)
 load('stacked_stan_spread.RData')
+dr <- stacked_stan$draws()
 posterior_draws <- 
-  cbind(c(stacked_stan@sim$samples[[1]]$dispersion[-c(1:2000)],
-          stacked_stan@sim$samples[[2]]$dispersion[-c(1:2000)]),
-        c(stacked_stan@sim$samples[[1]]$sigmaSq_etahat[-c(1:2000)],
-          stacked_stan@sim$samples[[2]]$sigmaSq_etahat[-c(1:2000)]))
+  cbind(c(as.data.frame(dr[,,2])[-c(1:2000),1],
+          as.data.frame(dr[,,2])[-c(1:2000),2]),
+        c(as.data.frame(dr[,,3])[-c(1:2000),1],
+          as.data.frame(dr[,,3])[-c(1:2000),1]))
 
 ## fixed prior correlation based on based analysis
 rho <- sqrt(1-0.5342973) # = 0.6824242
@@ -1297,9 +1318,6 @@ vegas_preds_arcsin <- c(sapply(1:length(hometeam_preds_expanded_raw),
 
 
 ## code for obtaining the constant term
-# > library(AbsolutelyStacked)
-# > library(MachineShop)
-# > library(recipes)
 # load('stacked_model_log.RData')
 # pr_tot <- predict(stacked_model, type = 'numeric')
 # act_tot <- as.numeric(response(stacked_model))
@@ -1327,10 +1345,16 @@ sigmaSq0s <- 0.02729538^2*(rep(my_preds_total, each = 81)/230.5397) -
 ## = total variance - inherent variance = vegas variance
 rm(stacked_model)
 load('stacked_stan_arcsin.RData')
-posterior_draws <- cbind(c(stacked_stan@sim$samples[[1]]$dispersion[-c(1:2000)],
-                      stacked_stan@sim$samples[[2]]$dispersion[-c(1:2000)]),
-                    c(stacked_stan@sim$samples[[1]]$sigmaSq_etahat[-c(1:2000)],
-                      stacked_stan@sim$samples[[2]]$sigmaSq_etahat[-c(1:2000)]))
+dr <- stacked_stan$draws()
+posterior_draws <- 
+  cbind(c(as.data.frame(dr[,,2])[-c(1:2000),1],
+          as.data.frame(dr[,,2])[-c(1:2000),2]),
+        c(as.data.frame(dr[,,3])[-c(1:2000),1],
+          as.data.frame(dr[,,3])[-c(1:2000),1]))
+# posterior_draws <- cbind(c(stacked_stan@sim$samples[[1]]$dispersion[-c(1:2000)],
+#                       stacked_stan@sim$samples[[2]]$dispersion[-c(1:2000)]),
+#                     c(stacked_stan@sim$samples[[1]]$sigmaSq_etahat[-c(1:2000)],
+#                       stacked_stan@sim$samples[[2]]$sigmaSq_etahat[-c(1:2000)]))
 #my_preds_og <- my_preds
 rho <- 0.7996677
 post_rho_mean <- (rho*(629-3) + rho_prior_mean/rho_prior_var)*post_rho_sd^2
@@ -1456,20 +1480,20 @@ colnames(arcsinscale) <- c("Date",
                           "AwayTeam")
 colnames(rawscale) <- colnames(arcsinscale)
 
-# ## Append predictions and decision rules 
-past_data <- read.csv("history_of_bets2024_arcsin.csv",
-                      stringsAsFactors = F)
-colnames(past_data) <- colnames(arcsinscale)
-write.csv(unique(rbind(past_data,arcsinscale)),
-          file = "history_of_bets2023_arcsin.csv",
-          row.names = F)
-
-past_data <- read.csv("history_of_bets2024_spread.csv",
-                      stringsAsFactors = F)
-colnames(past_data) <- colnames(rawscale)
-write.csv(unique(rbind(past_data,rawscale)),
-          file = "history_of_bets2024_spread.csv",
-          row.names = F)
+# # ## Append predictions and decision rules 
+# past_data <- read.csv("history_of_bets2024_arcsin.csv",
+#                       stringsAsFactors = F)
+# colnames(past_data) <- colnames(arcsinscale)
+# write.csv(unique(rbind(past_data,arcsinscale)),
+#           file = "history_of_bets2023_arcsin.csv",
+#           row.names = F)
+# 
+# past_data <- read.csv("history_of_bets2024_spread.csv",
+#                       stringsAsFactors = F)
+# colnames(past_data) <- colnames(rawscale)
+# write.csv(unique(rbind(past_data,rawscale)),
+#           file = "history_of_bets2024_spread.csv",
+#           row.names = F)
 cat("\n\n-----------------------------------------\n\n")
 
 ################################################################################

@@ -3,8 +3,7 @@
 ## ## Setup
 ################################################################################
 
-rm(list = ls())
-setwd('C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles')
+setwd(dir_prefix)
 library(MachineShop)
 library(recipes)
 library(foreach)
@@ -685,4 +684,4 @@ df <- bind_cols(df,yrz)
 ## final clean
 df <- df[,(apply(df,2,function(x)mean(is.na(x))) == 0)]
 df <- df[,(apply(df,2,function(x)length(unique(x)) > 1))]
-save(df,outcome_vars,file = "C:\\Users\\defgi\\Documents\\AbsolutelyStackedSupplementaryFiles\\recipes.RData")
+save(df,outcome_vars,file = "recipes.RData")

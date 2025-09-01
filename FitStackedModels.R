@@ -1,29 +1,28 @@
-rm(list=ls())
-library(MachineShop)
+## Libraries and functions
 library(recipes)
 library(parallel)
 library(foreach)
 library(doParallel)
 library(lubridate)
-library(rstan)
+library(cmdstanr)
 library(earth)
-library(randomForestSRC)
 library(quadprog)
 library(Matrix)
 library(MASS)
-library(StanHeaders)
-dir_prefix <- 'C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles/'
-setwd(paste0(dir_prefix,'Stacking'))
-for(k in c('glmer_constrained.R', 
-'HelperFunctions.R', 
-'make_dummy_Z_and_sigmalist.R',
-'make_glmerStackedModel.R', 
-'make_loglikelihood_MLMetric.R',
-'MLModel_DataPrep.R', 
-'predict_glmerStacked.R',
-'quantify_stacked_uncertainty.R', 
-'SoftmaxOperations.R', 
-'stepAIC_stacked.R')){
+library(MachineShop)
+setwd(paste0(dir_prefix, '/Stacking'))
+for (k in c(
+  'glmer_constrained.R',
+  'HelperFunctions.R',
+  'make_dummy_Z_and_sigmalist.R',
+  'make_glmerStackedModel.R',
+  'make_loglikelihood_MLMetric.R',
+  'MLModel_DataPrep.R',
+  'predict_glmerStacked.R',
+  'quantify_stacked_uncertainty.R',
+  'SoftmaxOperations.R',
+  'stepAIC_stacked.R'
+)) {
   source(k)
 }
 std <- function(x)(x-mean(x))/sd(x)
@@ -63,7 +62,7 @@ prep_fxn <- function(outcome,rand_int_per_year_per_team,link, df){
   )
   
   ## from manually selected variables looking at varimp plots
-  load(paste0(dir_prefix, outcome, "_vars2keep.RData"))
+  load(paste0(dir_prefix, "/", outcome, "_vars2keep.RData"))
   
   ## keep log or linear of most important variable 
   if(outcome %in% c("logPtsGame","arcsinsqrt_prop","overtime")){
@@ -454,15 +453,15 @@ save(
 ################################################################################
 
 ## Load our data frame constructed from PrepData
-load(paste0(dir_prefix,"recipes.RData"))
+load(paste0(dir_prefix,"/recipes.RData"))
 outcome <- 'ptsGame'
 
 ## Set up data for different outcomes
-prep_list_linear <- prep_fxn("ptsGame", rand_int_per_year_per_team = FALSE, link = "linear", df)
-prep_list_log <- prep_fxn("logPtsGame", rand_int_per_year_per_team = FALSE, link = "log", df)
-prep_list_overtime <- prep_fxn("overtime", rand_int_per_year_per_team = FALSE, link = "logit", df)
-prep_list_arcsin <- prep_fxn("arcsinsqrt_prop", rand_int_per_year_per_team = FALSE, link = "linear", df)
-prep_list_spread <- prep_fxn("spreadDiff", rand_int_per_year_per_team = FALSE, link = "linear", df)
+prep_list_linear <- prep_fxn("ptsGame", rand_int_per_year_per_team = TRUE, link = "linear", df)
+prep_list_log <- prep_fxn("logPtsGame", rand_int_per_year_per_team = TRUE, link = "log", df)
+prep_list_overtime <- prep_fxn("overtime", rand_int_per_year_per_team = TRUE, link = "logit", df)
+prep_list_arcsin <- prep_fxn("arcsinsqrt_prop", rand_int_per_year_per_team = TRUE, link = "linear", df)
+prep_list_spread <- prep_fxn("spreadDiff", rand_int_per_year_per_team = TRUE, link = "linear", df)
 
 ## Save and export recipe objects
 rec <- prep_list_linear$rec
@@ -488,14 +487,14 @@ setwd(dir_prefix)
 #' 4) spread as Guassian distributed
 #' 5) arcsin_sqrt as Gaussian distributed
 #' clusterExport(cl0,unique(c(c(as.vector(lsf.str())),ls()[ls() != 'cl0'])))
-for (ijk in c(1, 2, 4, 5)) {
+for (ijk in c(1, 2, 3, 4, 5)) {
   start_time <- Sys.time()
   
   if (ijk == 1) {
     
     # Linear (Gaussian) regression model
     outcome <- "ptsGame"
-    cl2 <- makeCluster(8)
+    cl2 <- makeCluster(7)
     registerDoParallel(cl2)
     
     # Extract model components from prepared data
@@ -522,37 +521,38 @@ for (ijk in c(1, 2, 4, 5)) {
     stacked_model <- fit(rec,
                          model = SuperModel(
                            glmnet_ptsGame1,
-                           xgb_ptsGame2,
+                           glmnet_log1,
+                           xgb_ptsGame1,
                            EarthModel(degree = 3, nprune = 250),
                            model = make_glmerStackedModel(
                              link = "linear",
                              incl_random_efx = TRUE,
                              tau_0 = 1,
                              est_dispersion = TRUE,
-                             min_learners = 3,
+                             min_learners = 2,
                              Z = Z,
                              sigma_list = sigma_list,
                              use_qp = TRUE,
                              fixed_weights = FALSE,
                              weights = NULL
                            ),
-                           control = CVControl(folds = 16, seed = 52245)
+                           control = CVControl(folds = 7, seed = 52245)
                          )
     )
     
     # Quantify uncertainty of stacked model using Stan
-    stacked_stan <- stacked_model %>%
+    stacked_stan <- try({stacked_model %>%
       quantify_stacked_uncertainty(
         return_fit = FALSE,
-        iter = 40000,
-        warmup = 2000, 
-        cores = 8,
-        take_a_break_first = TRUE,
+        iter = 10000,
+        warmup = 1000, 
+        cores = 2,
+        take_a_break_first = FALSE,
         filename = "ptsGame_stan.RData",
-        verbose = FALSE,
+        verbose = TRUE,
         mu_eta = mean(rec$template$ptsGame),
         sigma_eta = sd(rec$template$ptsGame)
-      )
+      )}, silent = TRUE)
     
     # Save fitted models  
     save(stacked_model, file = "stacked_model_gaussian.RData")
@@ -568,7 +568,7 @@ for (ijk in c(1, 2, 4, 5)) {
   } else if (ijk == 2) {
     
     # Quasi-Poisson regression model
-    cl2 <- makeCluster(8)
+    cl2 <- makeCluster(7)
     registerDoParallel(cl2)  
     
     rec <- prep_list_log$rec
@@ -589,9 +589,10 @@ for (ijk in c(1, 2, 4, 5)) {
     
     stacked_model <- fit(rec,
                          model = SuperModel(
+                           glmnet_ptsGame1,
                            glmnet_log1,
-                           xgb_log1,
-                           EarthModel_Log2,
+                           xgb_ptsGame1,
+                           EarthModel(degree = 3, nprune = 250),
                            model = make_glmerStackedModel(
                              link = "log",
                              incl_random_efx = TRUE,
@@ -603,22 +604,22 @@ for (ijk in c(1, 2, 4, 5)) {
                              use_qp = TRUE 
                            ),
                            all_vars = FALSE,
-                           control = CVControl(folds = 16, seed = 52245)
+                           control = CVControl(folds = 7, seed = 52245)
                          )
     )
     
-    stacked_stan <- stacked_model %>%
-      quantify_stacked_uncertainty(
+    stacked_stan <- try({stacked_model %>%
+        quantify_stacked_uncertainty(
         return_fit = FALSE,
-        iter = 40000,
-        warmup = 2000,
+        iter = 10000,
+        warmup = 1000,
         take_a_break_first = TRUE,
-        cores = 8,
+        cores = 2,
         filename = "logPtsGame_stan.RData", 
         verbose = FALSE,
         mu_eta = mean(rec$template$logPtsGame),
         sigma_eta = sd(rec$template$logPtsGame)
-      )
+      )}, silent = TRUE)
     
     save(stacked_model, file = "stacked_model_log.RData")
     if (!inherits(stacked_stan, "try-error")) {
@@ -631,7 +632,7 @@ for (ijk in c(1, 2, 4, 5)) {
   } else if (ijk == 3) {
     
     # Logistic regression model for overtime
-    cl2 <- makeCluster(8)
+    cl2 <- makeCluster(7)
     registerDoParallel(cl2)
     
     rec <- prep_list_overtime$rec
@@ -658,7 +659,6 @@ for (ijk in c(1, 2, 4, 5)) {
                          model = SuperModel(
                            glmnet_overtime1,
                            glmnet_overtime2,
-                           RandomForestModel(ntree = 50, mtry = 50),
                            model = make_glmerStackedModel(
                              link = "logit",
                              incl_random_efx = TRUE,
@@ -672,16 +672,16 @@ for (ijk in c(1, 2, 4, 5)) {
                              weights = NULL
                            ),
                            all_vars = FALSE,
-                           control = CVControl(folds = 16, seed = 52245)
+                           control = CVControl(folds = 7, seed = 52245)
                          )
     )
     
-    stacked_stan <- stacked_model %>%
+    stacked_stan <- try({stacked_model %>%
       quantify_stacked_uncertainty(
         return_fit = FALSE,
-        iter = 40000,
-        warmup = 2000,
-        cores = 8,
+        iter = 10000,
+        warmup = 1000,
+        cores = 2,
         take_a_break_first = FALSE,
         mu_eta = log(
           mean(as.character(rec$template$overtime) != "0") /
@@ -689,7 +689,7 @@ for (ijk in c(1, 2, 4, 5)) {
         ),
         filename = "overtime_stan.RData",
         verbose = FALSE
-      )
+      )}, silent = TRUE)
     
     save(stacked_model, file = "stacked_model_overtime.RData")
     if (!inherits(stacked_stan, "try-error")) {
@@ -702,7 +702,7 @@ for (ijk in c(1, 2, 4, 5)) {
   } else if (ijk == 4) {
     
     # Linear regression model for point spread
-    cl2 <- makeCluster(8)
+    cl2 <- makeCluster(7)
     registerDoParallel(cl2)
     
     rec <- prep_list_spread$rec  
@@ -724,8 +724,10 @@ for (ijk in c(1, 2, 4, 5)) {
     stacked_model <- fit(rec,
                          model = SuperModel(
                            glmnet_spread1,
+                           glmnet_arcsin1,
                            xgb_spread1, 
-                           EarthModel(degree = 2, nprune = 216),
+                           xgb_arcsin1,
+                           EarthModel(degree = 3, nprune = 216),
                            model = make_glmerStackedModel(
                              link = "linear",
                              incl_random_efx = TRUE,
@@ -739,22 +741,22 @@ for (ijk in c(1, 2, 4, 5)) {
                              weights = NULL
                            ),
                            all_vars = FALSE,
-                           control = CVControl(folds = 16, seed = 52246)
+                           control = CVControl(folds = 7, seed = 52246)
                          )
     )
     
-    stacked_stan <- stacked_model %>%
+    stacked_stan <- try({stacked_model %>%
       quantify_stacked_uncertainty(
         return_fit = FALSE, 
-        iter = 40000,
-        warmup = 2000,
-        cores = 8,
+        iter = 10000,
+        warmup = 1000,
+        cores = 2,
         take_a_break_first = TRUE,
         filename = "spread_stan.RData",
         verbose = FALSE, 
         mu_eta = mean(rec$template$spreadDiff),
         sigma_eta = sd(rec$template$spreadDiff)
-      )
+      )}, silent = TRUE)
     
     save(stacked_model, file = "stacked_model_spread.RData")
     if (!inherits(stacked_stan, "try-error")) {
@@ -767,7 +769,7 @@ for (ijk in c(1, 2, 4, 5)) {
   } else if (ijk == 5) {
     
     # Linear regression model for arcsin sqrt proportion of points scored by home team
-    cl2 <- makeCluster(8)  
+    cl2 <- makeCluster(7)  
     registerDoParallel(cl2)
     
     rec <- prep_list_arcsin$rec
@@ -783,19 +785,19 @@ for (ijk in c(1, 2, 4, 5)) {
     )
     
     clusterExport(cl2, c(
-      ls(), "rec", "Z", "sigma_list", "no_featreduc_vars", "earth"  
+      ls(), "rec", "Z", "sigma_list", "no_featreduc_vars", "earth"
     ))
     
     stacked_model <- fit(rec,
                          model = SuperModel(
-                           EarthModel_Log1,
-                           glmnet_arcsin2,
+                           glmnet_arcsin1,
                            xgb_arcsin1,
+                           EarthModel(degree = 3, nprune = 216),
                            model = make_glmerStackedModel(
                              link = "linear",
                              incl_random_efx = TRUE,
                              tau_0 = 1,
-                             est_dispersion = TRUE, 
+                             est_dispersion = TRUE,
                              min_learners = 3,
                              Z = Z,
                              sigma_list = sigma_list,
@@ -804,22 +806,22 @@ for (ijk in c(1, 2, 4, 5)) {
                              weights = NULL
                            ),
                            all_vars = FALSE,
-                           control = CVControl(folds = 16, seed = 52245)
+                           control = CVControl(folds = 7, seed = 52246)
                          )
     )
     
-    stacked_stan <- stacked_model %>%
-      quantify_stacked_uncertainty(
-        return_fit = FALSE,
-        iter = 40000,
-        warmup = 2000,
-        cores = 8,
-        take_a_break_first = TRUE, 
-        filename = "arcsin_stan.RData",
-        verbose = FALSE,
-        mu_eta = mean(rec$template$arcsinsqrt_prop),
-        sigma_eta = sd(rec$template$arcsinsqrt_prop)  
-      )
+    stacked_stan <- try({stacked_model %>%
+        quantify_stacked_uncertainty(
+          return_fit = FALSE, 
+          iter = 10000,
+          warmup = 1000,
+          cores = 2,
+          take_a_break_first = TRUE,
+          filename = "spread_stan.RData",
+          verbose = FALSE, 
+          mu_eta = mean(rec$template$arcsinsqrt_prop),
+          sigma_eta = sd(rec$template$arcsinsqrt_prop)
+        )}, silent = TRUE)
     
     save(stacked_model, file = "stacked_model_arcsin.RData")
     if (!inherits(stacked_stan, "try-error")) {

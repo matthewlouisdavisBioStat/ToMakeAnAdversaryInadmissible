@@ -1,27 +1,34 @@
-## Automatically upload data from the previous-night's games, assuming a 2024-2025 season
-setwd('C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles')
+## Automatically upload data from the previous-night's games
 rm(list = ls())
+dir_prefix <- 'C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles'
+setwd(dir_prefix)
 prep_data_only <- T
 update_matchups <- F
-source('C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles/PredictAndLoadNBA_2024.R')
+source(paste0(dir_prefix, '/PredictAndLoadNBA_2024.R'))
 
 ## Construct features from the raw data, prepare in a format suitable for model fitting
-source('C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles/PrepDataForNBA.R')
+rm(list = ls())
+dir_prefix <- 'C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles'
+source(paste0(dir_prefix, '/PrepDataForNBA.R'))
 
 ## Fit base learners, stacked models, and obtain posteriors for variance components
-source('C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles/FitStackedModels.R')
+rm(list = ls())
+dir_prefix <- 'C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles'
+source(paste0(dir_prefix, '/FitStackedModels.R'))
 
 ## Make predictions and decisions on bets
-setwd('C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles')
 rm(list = ls())
+dir_prefix <- 'C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles'
+setwd(dir_prefix)
 prep_data_only <- F
 update_matchups <- T
-source('C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles/PredictAndLoadNBA_2024.R')
+source(paste0(dir_prefix, '/PredictAndLoadNBA_2024.R'))
 
 ## Process the raw output of decision rules into a more user-friendly format
 library(foreach)
-dat_spread <- read.csv('C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles/SpreadBets.csv')
-dat_ou <- read.csv('C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles/OverUnderBets.csv')
+dir_prefix <- 'C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles'
+dat_spread <- read.csv(paste0(dir_prefix, '/SpreadBets.csv'))
+dat_ou <- read.csv(paste0(dir_prefix, '/OverUnderBets.csv'))
 newspread <- foreach(team = unique(dat_spread$AwayTeam),
                      .combine = 'rbind') %do% {
                        
@@ -59,10 +66,10 @@ newou <- foreach(team = unique(dat_ou$AwayTeam),
                  }
 write.csv(newspread, 
           file = 
-            'C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles/NewSpreadBets.csv',
+            paste0(dir_prefix, '/NewSpreadBets.csv'),
           row.names = F)
 write.csv(newou, file = 
-            'C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles/NewOverUnderBets.csv',
+            paste0(dir_prefix, '/NewOverUnderBets.csv'),
           row.names = F)
 
 
@@ -99,18 +106,16 @@ email <- envelope() %>%
        As a reminder, the program cannot take into account off-court injuries, 
        recent trades, injuries, or drama. Bet at your own discretion.") %>%
   attachment("Today's Recommended Bets are Included Here.",
-             path = "C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles/MoneyLineBets.csv",
+             path = paste0(dir_prefix, "/MoneyLineBets.csv"),
              name = "MoneyLineBets.csv") %>% 
   attachment("Today's Recommended Bets are Included Here.",
-             path = "C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles/NewSpreadBets.csv",
+             path = paste0(dir_prefix, "/NewSpreadBets.csv"),
              name = "SpreadBets.csv") %>% 
   attachment("Today's Recommended Bets are Included Here.",
-             path = "C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles/NewOverUnderBets.csv",
+             path = paste0(dir_prefix, "/NewOverUnderBets.csv"),
              name = "OverUnderBets.csv")
 smtp <- server(host = "smtp.gmail.com",
                port = 465,
                username = "matthewlouisdavis@gmail.com",
                password = "<>")
 smtp(email, verbose = F)
-
-rm(list = ls())

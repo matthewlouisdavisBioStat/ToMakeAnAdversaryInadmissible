@@ -1,0 +1,1 @@
+"C:\Program Files\R\R-4.2.2\bin\x64\Rscript.exe" "C:\Users\defgi\Documents\AbsolutelyStackedSupplementaryFiles\MasterScript.R"
