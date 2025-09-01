@@ -842,8 +842,8 @@ my_preds_per48 <- rep(my_preds_per48,each = 81)
 ## average minutes per game
 (avg_time <- sum((c(0.9408248,0.05116193,0.008013314) * 
                     c(48, (48+5), (48+10)))))
-sigmaSq0 <-  max(1e-64, 17.72642^2) - 
-             stacked_model$super_fit$data$final_fit$tau^2
+sigmaSq0 <-  max(1e-64, 17.72642^2 - 
+             stacked_model$super_fit$data$final_fit$tau^2)
 rm(stacked_model)
 
 ## get vegas predictions, based on log model predictions in fact
@@ -1663,5 +1663,6 @@ write.csv(spread_res,file = "SpreadBets.csv",row.names = F)
 write.csv(ou_res,file = "OverUnderBets.csv", row.names = F)
 nd <- Sys.time()
 print(nd - strt)
+
 
 }
