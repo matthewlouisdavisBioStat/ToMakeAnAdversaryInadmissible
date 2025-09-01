@@ -1,5 +1,5 @@
 # To Make an Adversary Inadmissible 
-This project provides exhaustive code for using Vegas's historical performance as a prior, and stacked supervised machine learning models as a likelihood, and providing posterior-predictive distributions for total points scored and difference in home vs. away team points, along with corresponding decision rules for which bets to place given Vegas over-under, spread, and money lines.
+This project provides exhaustive code for using Vegas's historical performance as a prior, and stacked supervised machine learning models as a likelihood, and providing posterior-predictive distributions for total points scored and difference in home vs. away team points, along with corresponding decision rules for which bets to place given Vegas over-under, spread, and money lines for regular season NBA games.
 
 # Folder Stucture
 
