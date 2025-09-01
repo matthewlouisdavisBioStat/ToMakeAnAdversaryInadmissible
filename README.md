@@ -30,7 +30,7 @@ Bets are only replaced if the redundant set of models for each response are in a
 
 Contains variable importance plots and example output emailed to users for making decisions. The decisions are read off such that, given vegas lines, a certain type of bet (i.e. over, under, or home/away) is recommended for over-unders, spreads, and moneylines.
 
-The history of points bet bets placed as used for visualizing profit over time is also available in "PointsBetCleaned.csv". 
+The history of points bet bets placed as used for visualizing profit over time is also available in "PointsBetCleaned.xlsx". 
 
 # First Time Users
 
