@@ -100,8 +100,8 @@ load("bs.RData")
 lag_og <- 5
 lag <- lag_og
 
-## profit cutoff, make four cents per dollar
-cutoff <- .04
+## profit cutoff, make 2.5 cents per dollar
+cutoff <- .025
 
 ## process and save matchups
 matchups_og <- matchups_enter[,c(1:4),drop=FALSE]
@@ -842,8 +842,8 @@ my_preds_per48 <- rep(my_preds_per48,each = 81)
 ## average minutes per game
 (avg_time <- sum((c(0.9408248,0.05116193,0.008013314) * 
                     c(48, (48+5), (48+10)))))
-sigmaSq0 <-  max(1e-64, 16.4965227^2/((avg_time/48)^2) - 
-  stacked_model$super_fit$data$final_fit$tau^2)
+sigmaSq0 <-  max(1e-64, 17.72642^2) - 
+             stacked_model$super_fit$data$final_fit$tau^2
 rm(stacked_model)
 
 ## get vegas predictions, based on log model predictions in fact
@@ -1048,7 +1048,7 @@ my_preds_log <- log(
               )
 my_preds_total <- exp(my_preds_log)*0.5 + my_preds_linear*0.5
 my_preds <- rep(my_preds_log, each = 81)
-sigmaSq0s <- 0.06914059^2  -  1/(stacked_model$super_fit$data$final_fit$tau^2 * 
+sigmaSq0s <- 0.08112754^2  -  1/(stacked_model$super_fit$data$final_fit$tau^2 * 
                                    vegas_preds) # variance of log pois
 
 ## posterior distributions for parameters of interest
@@ -1217,9 +1217,9 @@ vegas_preds_spread <- c(sapply(my_preds,function(x){
 my_preds <- rep(my_preds, each = 81) 
 
 ## we actually KNOW the true variance, luckily, from prior analysis and VSTs
-sigmaSq0 <-  (12.6146991)^2 - stacked_model$super_fit$data$final_fit$tau^2
+sigmaSq0 <-  (12.39497)^2 - stacked_model$super_fit$data$final_fit$tau^2
 if(sigmaSq0 < 0){
-  sigmaSq0 <- (12.6146991)^2  - mse(response(stacked_model),
+  sigmaSq0 <- (12.39497)^2  - mse(response(stacked_model),
                                   predict(stacked_model))
   if(sigmaSq0 < 0){
     sigmaSq0 <- abs(sigmaSq0)/2 # damn, this sucks
@@ -1339,7 +1339,7 @@ const <- 0.3993731*0.25/rep(my_preds_total, each = 81)
 # [1] 230.5397
 # we correct for the fact that this prior is computed from average only in 2023,
 # so we adjust for the predicted total of each game instead
-sigmaSq0s <- 0.02729538^2*(rep(my_preds_total, each = 81)/230.5397) - 
+sigmaSq0s <- 0.02869278^2*(rep(my_preds_total, each = 81)/230.5397) - 
              const
 
 ## = total variance - inherent variance = vegas variance
