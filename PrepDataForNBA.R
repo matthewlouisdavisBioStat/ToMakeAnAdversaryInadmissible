@@ -187,6 +187,12 @@ average_vars <- unique(c(paste0(vars,"PerMinute"),
 ##
 gl$logpts <- log(gl$ptsTeam)
 gl$sqrtpts <- 2*sqrt(gl$ptsTeam + 3/8)
+
+## Optimal weighting parameters
+alpha0 <- 0.02458456
+beta0 <- 0.02132673
+gamma0 <- -0.19484078
+
 cl <- makeCluster(round(length(years)))
 registerDoParallel(cl)
 clusterExport(cl,ls())
@@ -286,7 +292,8 @@ new_gl <- foreach(year = years,
                                          colnames(data)])){
           
           ## weighted average over all previous games
-          w <- (sapply((1:max(i-1,1)),function(x)1/x))
+          w <- sapply(max(i-1, 1):1,
+                      function(x)exp(alpha0 + beta0*log(i) + gamma0*abs(i - x)))
           datatemp[i,var] <- weighted.mean(
             as.numeric(unlist(data[max(i-1,1):1,var])),
             w,
@@ -685,3 +692,4 @@ df <- bind_cols(df,yrz)
 df <- df[,(apply(df,2,function(x)mean(is.na(x))) == 0)]
 df <- df[,(apply(df,2,function(x)length(unique(x)) > 1))]
 save(df,outcome_vars,file = "recipes.RData")
+
