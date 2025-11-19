@@ -3,20 +3,20 @@
 ## ## ## ## 
 
 ################################################################################
-  ## ## Setup ## ## 
+## ## Setup ## ## 
 # 
 strt <- Sys.time()
 for(k in paste0('./Stacking/',c(
-           'glmer_constrained.R', 
-           'HelperFunctions.R', 
-           'make_dummy_Z_and_sigmalist.R',
-           'make_glmerStackedModel.R', 
-           'make_loglikelihood_MLMetric.R',
-           'MLModel_DataPrep.R', 
-           'predict_glmerStacked.R',
-           'quantify_stacked_uncertainty.R', 
-           'SoftmaxOperations.R', 
-           'stepAIC_stacked.R'))){
+  'glmer_constrained.R', 
+  'HelperFunctions.R', 
+  'make_dummy_Z_and_sigmalist.R',
+  'make_glmerStackedModel.R', 
+  'make_loglikelihood_MLMetric.R',
+  'MLModel_DataPrep.R', 
+  'predict_glmerStacked.R',
+  'quantify_stacked_uncertainty.R', 
+  'SoftmaxOperations.R', 
+  'stepAIC_stacked.R'))){
   source(k)
 }
 
@@ -28,35 +28,35 @@ for(k in paste0('./Stacking/',c(
 #sched[sched$dateGame == as.character(Sys.Date()),]
 date <- as.character(Sys.Date())
 
-  url = "https://cdn.nba.com/static/json/staticData/scheduleLeagueV2_1.json"
-  json <-
-    jsonlite::fromJSON(url, simplifyVector = T,
-                       simplifyDataFrame = T,
-                       flatten = T)
-    season <- json$leagueSchedule$seasonYear
-    id <- json$leagueSchedule$leagueId
-    tbl_dates <- json$leagueSchedule$gameDates
-    sched_dat <- data.table::rbindlist(tbl_dates$games,fill = T)
-    
-    ## optional loading/saving sched
-    #save(sched_dat, file = 'nba_schedule_data.RData')
-    #load('nba_schedule_data.RData')
-    
-    sched_subs <- sched_dat[substr(sched_dat$gameDateUTC,1,10) == date,]
-    
-    ## No games or only 1 game, include tomorrow's predictions
-     if(nrow(sched_subs) <= 1){
-      warning("Including dates from tomorrow's games")
-      sched_subs <- rbind(sched_subs,
-              sched_dat[substr(sched_dat$gameDateUTC,1,10) == 
-                             as.character(Sys.Date()+1),])
-     }
-     if(nrow(sched_subs) <= 1){
-      warning("Using first game for dummy purposes")
-      sched_subs <- sched_dat[1:2,]
-     }
-    sched_subs$slugMatchup <- paste0(sched_subs$awayTeam.teamTricode," @ ", 
-                                     sched_subs$homeTeam.teamTricode)
+url = "https://cdn.nba.com/static/json/staticData/scheduleLeagueV2_1.json"
+json <-
+  jsonlite::fromJSON(url, simplifyVector = T,
+                     simplifyDataFrame = T,
+                     flatten = T)
+season <- json$leagueSchedule$seasonYear
+id <- json$leagueSchedule$leagueId
+tbl_dates <- json$leagueSchedule$gameDates
+sched_dat <- data.table::rbindlist(tbl_dates$games,fill = T)
+
+## optional loading/saving sched
+#save(sched_dat, file = 'nba_schedule_data.RData')
+#load('nba_schedule_data.RData')
+
+sched_subs <- sched_dat[substr(sched_dat$gameDateUTC,1,10) == date,]
+
+## No games or only 1 game, include tomorrow's predictions
+if(nrow(sched_subs) <= 1){
+  warning("Including dates from tomorrow's games")
+  sched_subs <- rbind(sched_subs,
+                      sched_dat[substr(sched_dat$gameDateUTC,1,10) == 
+                                  as.character(Sys.Date()+1),])
+}
+if(nrow(sched_subs) <= 1){
+  warning("Using first game for dummy purposes")
+  sched_subs <- sched_dat[1:2,]
+}
+sched_subs$slugMatchup <- paste0(sched_subs$awayTeam.teamTricode," @ ", 
+                                 sched_subs$homeTeam.teamTricode)
 
 teams <- sapply(sched_subs$slugMatchup, function(x){
   if(grepl(' vs.', x)){
@@ -93,6 +93,8 @@ library(doSNOW)
 library(magrittr)
 library(R.utils)
 library(nbastatR)
+library(httr)
+library(jsonlite)
 options(curl_interrupt = TRUE)
 load("bs.RData")
 
@@ -129,7 +131,7 @@ cat("\n\n\n\n\n\n\n\n\n++++++++++++++++++++++++++++++++++++\n\n\n\n\n\n\n")
 ################################################################################
 
 load('bs.RData')
-years <- 2025
+years <- 2026
 gl <- game_logs(years, result_types = 'team',
                 assign_to_environment = FALSE) %>%
   mutate(outcome = as.numeric(as.factor(outcomeGame))-1)
@@ -140,193 +142,320 @@ gl <- gl[!is.na(gl$outcomeGame),]
 ids <- unique(gl$idGame)
 start <- Sys.time()
 
+## Function for pulling from NBA API directly
+pull_boxscore_v3 <- function(game_id) {
+  
+  # Set up headers for NBA API
+  headers <- c(
+    'User-Agent' = 'Edge/5.0',
+    'Referer' = 'https://stats.nba.com/',
+    'Accept' = 'application/json',
+    'x-nba-stats-origin' = 'stats',
+    'x-nba-stats-token' = 'true'
+  )
+  
+  # Initialize empty list to store all data
+  all_data <- list()
+  
+  # List of V3 endpoints and their corresponding data keys
+  endpoints <- list(
+    boxscoreadvancedv3 = "boxScoreAdvanced",
+    boxscorescoringv3 = "boxScoreScoring",
+    boxscorefourfactorsv3 = "boxScoreFourFactors",
+    boxscoremiscv3 = "boxScoreMisc",
+    boxscoretraditionalv3 = "boxScoreTraditional",
+    boxscoreplayertrackv3 = "boxScorePlayerTrack"
+  )
+  
+  for (endpoint_name in names(endpoints)) {
+    tryCatch({
+      url <- paste0("https://stats.nba.com/stats/", endpoint_name, "?GameID=00", game_id)
+      response <- GET(url, add_headers(.headers = headers), timeout(30))
+      
+      if (response$status_code == 200) {
+        content_text <- content(response, "text", encoding = "UTF-8")
+        if (nchar(content_text) > 10) {
+          data <- fromJSON(content_text)
+          
+          # Get the correct key for this endpoint
+          endpoint_key <- endpoints[[endpoint_name]]
+          
+          if (endpoint_key %in% names(data)) {
+            endpoint_data <- data[[endpoint_key]]
+            
+            # Extract home and away team stats
+            if ("homeTeam" %in% names(endpoint_data) && "awayTeam" %in% names(endpoint_data)) {
+              home_stats <- as.data.frame(endpoint_data$homeTeam$statistics)
+              away_stats <- as.data.frame(endpoint_data$awayTeam$statistics)
+              
+              home_stats$idTeam <- endpoint_data$homeTeamId
+              away_stats$idTeam <- endpoint_data$awayTeamId
+              home_stats$idGame <- game_id
+              away_stats$idGame <- game_id
+              
+              combined_stats <- rbind(home_stats, away_stats)
+              all_data[[endpoint_name]] <- combined_stats
+            }
+          }
+        }
+      }
+      
+      # Small delay between requests to avoid rate limiting
+      Sys.sleep(runif(1, 0.3, 0.7))
+      
+    }, error = function(e) {
+      warning(
+        paste("Error fetching", 
+              endpoint_name, "for game", game_id, ":", e$message))
+    })
+  }
+  
+  ## Merge all endpoint data by idTeam and idGame
+  if (length(all_data) > 0) {
+    # First pass: remove duplicate columns within each dataset before merging
+    all_data <- lapply(all_data, function(df) {
+      # Keep only the first occurrence of any duplicated column name
+      df[, !duplicated(names(df))]
+    })
+    
+    result <- Reduce(function(x, y) {
+      # Find common columns (excluding join keys)
+      common_cols <- intersect(names(x), names(y))
+      common_cols <- setdiff(common_cols, c("idGame", "idTeam"))
+      
+      # Remove common columns from y before merging to avoid .y suffixes
+      if (length(common_cols) > 0) {
+        y <- y[, !(names(y) %in% common_cols)]
+      }
+      
+      merge(x, y, by = c("idGame", "idTeam"), all = TRUE)
+    }, all_data)
+    
+    # Rename columns to match old nbastatR format
+    column_mapping <- c(
+      # Advanced stats
+      "assistPercentage" = "pctAST",
+      "offensiveReboundPercentage" = "pctOREB",
+      "defensiveReboundPercentage" = "pctDREB",
+      "reboundPercentage" = "pctTREB",
+      "turnoverRatio" = "pctTOVTeam",
+      "estimatedTeamTurnoverPercentage" = "pctTOVE",
+      "effectiveFieldGoalPercentage" = "pctEFG",
+      "trueShootingPercentage" = "pctTS",
+      "usagePercentage" = "pctUSG",
+      "estimatedUsagePercentage" = "pctUSGE",
+      "minutes" = "minExact",
+      "estimatedOffensiveRating" = "ortgE",
+      "offensiveRating" = "ortg",
+      "estimatedDefensiveRating" = "drtgE",
+      "defensiveRating" = "drtg",
+      "estimatedNetRating" = "netrtgE",
+      "netRating" = "netrtg",
+      "assistToTurnover" = "ratioASTtoTOV",
+      "assistRatio" = "ratioAST",
+      "estimatedPace" = "paceE",
+      "pace" = "pace",
+      "pacePer40" = "pacePer40PACE_PER40",
+      "possessions" = "possessions",
+      "PIE" = "ratioPIE",
+      
+      # Traditional stats
+      "fieldGoalsMade" = "fgm",
+      "fieldGoalsAttempted" = "fga",
+      "fieldGoalsPercentage" = "pctFG",
+      "threePointersMade" = "fg3m",
+      "threePointersAttempted" = "fg3a",
+      "threePointersPercentage" = "pctFG3",
+      "freeThrowsMade" = "ftm",
+      "freeThrowsAttempted" = "fta",
+      "freeThrowsPercentage" = "pctFT",
+      "reboundsOffensive" = "oreb",
+      "reboundsDefensive" = "dreb",
+      "reboundsTotal" = "treb",
+      "assists" = "ast",
+      "steals" = "stl",
+      "blocks" = "blk",
+      "turnovers" = "tov",
+      "foulsPersonal" = "pf",
+      "points" = "pts",
+      "plusMinusPoints" = "plusminus",
+      "blocksAgainst" = "blka",
+      "foulsDrawn" = "pfd",
+      
+      # Scoring stats
+      "percentageFieldGoalsAttempted2pt" = "pctFGAasFG2",
+      "percentageFieldGoalsAttempted3pt" = "pctFGAasFG3",
+      "percentagePoints2pt" = "pctPTSasFG2",
+      "percentagePointsMidrange2pt" = "pctPTSasFG2asMR",
+      "percentagePoints3pt" = "pctsPTSasFG3",
+      "percentagePointsFastBreak" = "pctPTSasFB",
+      "percentagePointsFreeThrow" = "pctPTSasFT",
+      "percentagePointsOffTurnovers" = "pctPTSasOffTOV",
+      "percentagePointsPaint" = "pctPTSasPaint",
+      "percentageAssisted2pt" = "pctFG2MasAssisted",
+      "percentageUnassisted2pt" = "pctFG2MasUnassisted",
+      "percentageAssisted3pt" = "pctFG3MasAssisted",
+      "percentageUnassisted3pt" = "pctFG3MasUnassisted",
+      "percentageAssistedFGM" = "pctFGMasAssisted",
+      "percentageUnassistedFGM" = "pctFGMasUnassisted",
+      
+      # Four Factors
+      "oppEffectiveFieldGoalPercentage" = "pctEFGOpponent",
+      "oppTeamTurnoverPercentage" = "pctTOVOpponent",
+      "oppOffensiveReboundPercentage" = "pctOREBOpponent",
+      "freeThrowAttemptRate" = "rateFTA",
+      "oppFreeThrowAttemptRate" = "rateFTAOpponent",
+      
+      # Misc stats
+      "pointsOffTurnovers" = "ptsOffTOV",
+      "pointsSecondChance" = "ptsSecondChance",
+      "pointsFastBreak" = "ptsFastBreak",
+      "pointsPaint" = "ptsPaint",
+      "oppPointsOffTurnovers" = "ptsOffTOVOpponent",
+      "oppPointsSecondChance" = "ptsSecondChanceOpponent",
+      "oppPointsFastBreak" = "ptsFastBreakOpponent",
+      "oppPointsPaint" = "ptsPaintOpponent",
+      
+      # Player Tracking stats (from boxscoreplayertrackv3)
+      "distance" = "distMiles",
+      "reboundChancesOffensive" = "orebChances",
+      "reboundChancesDefensive" = "drebChances",
+      "reboundChancesTotal" = "trebChances",
+      "touches" = "touches",
+      "secondaryAssists" = "astSecondary",
+      "freeThrowAssists" = "ftAST",
+      "passes" = "passes",
+      "contestedFieldGoalsMade" = "fgmContested",
+      "contestedFieldGoalsAttempted" = "fgaContested",
+      "contestedFieldGoalPercentage" = "pctFGContested",
+      "uncontestedFieldGoalsMade" = "fgmUncontested",
+      "uncontestedFieldGoalsAttempted" = "fgaUncontested",
+      "uncontestedFieldGoalsPercentage" = "pctFGUncontested",
+      "defendedAtRimFieldGoalsMade" = "fgmRimDefended",
+      "defendedAtRimFieldGoalsAttempted" = "fgaRimDefended",
+      "defendedAtRimFieldGoalPercentage" = "pctFGRimDefended"
+    )
+    
+    # Apply column name mapping
+    for (old_name in names(column_mapping)) {
+      if (old_name %in% names(result)) {
+        names(result)[names(result) == old_name] <- column_mapping[[old_name]]
+      }
+    }
+    
+    # Convert minExact from time format to numeric minutes if it's a character
+    if ("minExact" %in% names(result) && is.character(result$minExact)) {
+      result$minExact <- sapply(result$minExact, function(x) {
+        if (is.na(x) || x == "") return(NA)
+        parts <- as.numeric(strsplit(x, ":")[[1]])
+        if (length(parts) == 2) {
+          return(parts[1] + parts[2]/60)  # Convert MM:SS to decimal minutes
+        } else if (length(parts) == 3) {
+          return(parts[1]*60 + parts[2] + parts[3]/60)  # Convert HH:MM:SS to decimal minutes
+        }
+        return(as.numeric(x))
+      })
+    }
+    
+    return(result)
+  } else {
+    return(NULL)
+  }
+}
 
-ids <- ids[!(ids %in% bs$idGame)]
+################################################################################
+## ## Pull new box scores using V3 API
+################################################################################
+
+ids <- ids[!(ids %in% bs$idGame) & (ids != 42000306)]
 if(max(table(bs$idGame)) > 2){
   stop("duplicated ids")
 }
 if(length(ids) > 0) {
-  for (id in ids[1:min(length(ids),100)]) {
+  for (id in ids[1:min(length(ids), 98)]) {
     print(paste(grep(id, ids), length(ids), sep = "/"))
+    
+    ## Initial pull
     bs_temp <- try({
       withTimeout({
-        box_scores(
-          game_ids = id,
-          result_types = "team",
-          box_score_types = c(
-            "Advanced",
-            "Scoring",
-            "Four Factors",
-            "Misc",
-            "tracking"
-          ),
-          assign_to_environment = FALSE
-        )$dataBoxScore %>%
-          as.data.frame()
-      }, timeout = 25000, onTimeout = "silent")
+        pull_boxscore_v3(id)
+      }, timeout = 60, onTimeout = "silent")
     }, silent = TRUE)
-    if (class(bs_temp) == "data.frame") {
+    
+    ## Processing
+    if (inherits(bs_temp, "data.frame") && nrow(bs_temp) > 0) {
+      # city/state, team names
+      bs_temp$slugTeam <- c(NA, NA)
+      bs_temp$slugTeam[1] <- gl$slugTeam[gl$idGame == id & 
+                                           gl$idTeam == bs_temp$idTeam[1]]
+      bs_temp$slugTeam[2] <- gl$slugTeam[gl$idGame == id & 
+                                           gl$idTeam == bs_temp$idTeam[2]]
+      bs_temp$teamName <- c(NA, NA)
+      bs_temp$teamName[1] <- gl$nameTeam[gl$idGame == id & 
+                                         gl$idTeam == bs_temp$idTeam[1]]
+      bs_temp$teamName[2] <- gl$nameTeam[gl$idGame == id & 
+                                         gl$idTeam == bs_temp$idTeam[2]]
+        
+      # Ensure compatible column types before binding
+      common_cols <- intersect(names(bs), names(bs_temp))
+      
+      # Convert list columns to character if needed
+      for (col in common_cols) {
+        if (is.list(bs[[col]])) bs[[col]] <- as.character(bs[[col]])
+        if (is.list(bs_temp[[col]])) bs_temp[[col]] <- as.character(bs_temp[[col]])
+      }
+      
       bs <- bind_rows(bs, bs_temp)
-    } else{
+      print(paste("Successfully added game", id))
+    } else {
       print("failed")
     }
+    
     end <- Sys.time()
     print(end - start)
   }
+  
   end <- Sys.time()
   print(end - start)
   bs <- unique(bs)
-  bs <- bs[bs$minExact >= 239,]
-  save(bs,file = "bs.RData")
-}
-
-## duplicate to catch the errors on the first pull
-bs <- bs[!(bs$idGame %in% ids),]
-if(length(ids) > 0) {
-  for (id in ids[1:min(length(ids),100)]) {
-    print(paste(grep(id, ids), length(ids), sep = "/"))
-    bs_temp <- try({
-      withTimeout({
-        box_scores(
-          game_ids = id,
-          result_types = "team",
-          box_score_types = c(
-            "Advanced",
-            "Scoring",
-            "Four Factors",
-            "Misc",
-            "tracking"
-          ),
-          assign_to_environment = FALSE
-        )$dataBoxScore %>%
-          as.data.frame()
-      }, timeout = 25000, onTimeout = "silent")
-    }, silent = TRUE)
-    if (class(bs_temp) == "data.frame") {
-      bs <- bind_rows(bs, bs_temp)
-    } else{
-      print("failed")
-    }
-    end <- Sys.time()
-    print(end - start)
+  
+  # Filter for complete games only (239+ minutes)
+  if ("minExact" %in% names(bs)) {
+    bs <- bs[bs$minExact >= 239, ]
+  } else if ("minutes" %in% names(bs)) {
+    bs <- bs[bs$minutes >= 239, ]
   }
-  end <- Sys.time()
-  print(end - start)
-  bs <- unique(bs)
-  bs <- bs[bs$minExact >= 239,]
-  save(bs,file = "bs.RData")
+  
+  save(bs, file = "bs.RData")
+  print(paste("Saved", length(unique(bs$idGame)), "games to bs.RData"))
 }
 
-bs <- bs[!(bs$idGame %in% ids),]
-if(length(ids) > 0) {
-  for (id in ids[1:min(length(ids),100)]) {
-    print(paste(grep(id, ids), length(ids), sep = "/"))
-    bs_temp <- try({
-      withTimeout({
-        box_scores(
-          game_ids = id,
-          result_types = "team",
-          box_score_types = c(
-            "Advanced",
-            "Scoring",
-            "Four Factors",
-            "Misc",
-            "tracking"
-          ),
-          assign_to_environment = FALSE
-        )$dataBoxScore %>%
-          as.data.frame()
-      }, timeout = 25000, onTimeout = "silent")
-    }, silent = TRUE)
-    if (class(bs_temp) == "data.frame") {
-      bs <- bind_rows(bs, bs_temp)
-    } else{
-      print("failed")
-    }
-    end <- Sys.time()
-    print(end - start)
-  }
-  end <- Sys.time()
-  print(end - start)
-  bs <- unique(bs)
-  bs <- bs[bs$minExact >= 239,]
-  save(bs,file = "bs.RData")
-}
+## impute these variables to be equal to be the average of median and mean of non-0 entries
+# when equal to 0, when tracking data is missing
+# affects very few entries overall
+mean_median_impute <- c(
+  'touches',
+  'trebChances',
+  'drebChances',
+  'orebChances',
+  'distMiles',
+  'pctFGRimDefended',
+  'fgaRimDefended',
+  'fgmRimDefended',
+  'pctFGUncontested',
+  'fgaUncontested',
+  'fgmUncontested',
+  'pctFGContested',
+  'fgaContested',
+  'fgmContested',
+  'passes'
+)
+rws <- which(rowMeans(abs(bs[,mean_median_impute])) == 0)
+bs[rws, mean_median_impute] <- apply(bs[-rws,mean_median_impute], 2, median, na.rm = TRUE)*0.5 + 
+                               apply(bs[-rws,mean_median_impute], 2, mean, na.rm = TRUE)*0.5
 
-bs <- bs[!(bs$idGame %in% ids),]
-if(length(ids) > 0) {
-  for (id in ids[1:min(length(ids),100)]) {
-    print(paste(grep(id, ids), length(ids), sep = "/"))
-    bs_temp <- try({
-      withTimeout({
-        box_scores(
-          game_ids = id,
-          result_types = "team",
-          box_score_types = c(
-            "Advanced",
-            "Scoring",
-            "Four Factors",
-            "Misc",
-            "tracking"
-          ),
-          assign_to_environment = FALSE
-        )$dataBoxScore %>%
-          as.data.frame()
-      }, timeout = 25000, onTimeout = "silent")
-    }, silent = TRUE)
-    if (class(bs_temp) == "data.frame") {
-      bs <- bind_rows(bs, bs_temp)
-    } else{
-      print("failed")
-    }
-    end <- Sys.time()
-    print(end - start)
-  }
-  end <- Sys.time()
-  print(end - start)
-  bs <- unique(bs)
-  bs <- bs[bs$minExact >= 239,]
-  save(bs,file = "bs.RData")
-}
-
-
-bs <- bs[!(bs$idGame %in% ids),]
-if(length(ids) > 0) {
-  for (id in ids[1:min(length(ids),100)]) {
-    print(paste(grep(id, ids), length(ids), sep = "/"))
-    bs_temp <- try({
-      withTimeout({
-        box_scores(
-          game_ids = id,
-          result_types = "team",
-          box_score_types = c(
-            "Advanced",
-            "Scoring",
-            "Four Factors",
-            "Misc",
-            "tracking"
-          ),
-          assign_to_environment = FALSE
-        )$dataBoxScore %>%
-          as.data.frame()
-      }, timeout = 25000, onTimeout = "silent")
-    }, silent = TRUE)
-    if (class(bs_temp) == "data.frame") {
-      bs <- bind_rows(bs, bs_temp)
-    } else{
-      print("failed")
-    }
-    end <- Sys.time()
-    print(end - start)
-  }
-  end <- Sys.time()
-  print(end - start)
-  bs <- unique(bs)
-  bs <- bs[bs$minExact >= 239,]
-  save(bs,file = "bs.RData")
-}
-
-min(table(bs$slugTeam[bs$idGame %in% gl$idGame[gl$yearSeason == 2025]]))
+## Minimum number of games played by a team this season
+min(table(bs$slugTeam[bs$idGame %in% gl$idGame[gl$yearSeason == 2026]]))
 
 
 ################################################################################
@@ -451,13 +580,13 @@ average_vars <- unique(c(paste0(vars,"PerMinute"),
                          edit_vars))
 gl$logpts <- log(gl$ptsTeam)
 gl$sqrtpts <- 2*sqrt(gl$ptsTeam + 3/8)
-gl <- gl[gl$dateGame <= date,]
 
 ## Optimal weighting parameters
-alpha0 <- 0.02458456
-beta0 <- 0.02132673
-gamma0 <- -0.19484078
+alpha0 <- .09772250  
+beta0 <- .05226559 
+gamma0 <- -0.26998223
 
+gl <- gl[gl$dateGame <= date,]
 for(year in years){
   cat("\n\t", year)
   new_gl_temp <- data.frame()
@@ -489,11 +618,11 @@ for(year in years){
       gl_temp$sqrtPtsTeam <- 2*sqrt(gl_temp$ptsTeam + 3/8)
       gl_temp$logPtsTeam <- log(gl_temp$ptsTeam)
       gl_temp$ptsTeamOpp <-    gl_temp_opp$ptsTeam*240/
-                                     gl_temp_opp$minutesTeam
+        gl_temp_opp$minutesTeam
       gl_temp$logPtsTeamOpp <- log(gl_temp_opp$ptsTeam*240/
                                      gl_temp_opp$minutesTeam)
       gl_temp$sqrtPtsTeamOpp <- 2*sqrt(gl_temp_opp$ptsTeam*240/
-                                     gl_temp_opp$minutesTeam + 3/8)
+                                         gl_temp_opp$minutesTeam + 3/8)
       gl_temp$outcomeOpp <- gl_temp_opp$outcome
       gl_temp$spread <- gl_temp$ptsTeam - gl_temp$ptsTeamOpp
       gl_temp <- gl_temp[,c('idGame',
@@ -532,7 +661,7 @@ for(year in years){
           
           ## weighted average over all previous games
           w <- sapply(max(i-1, 1):1,
-                      function(x)exp(alpha0 + beta0*log(i) + gamma0*abs(i - x)))             
+                      function(x)exp(alpha0 + beta0*log(i) + gamma0*abs(i - x)))
           datatemp[i,var] <- weighted.mean(
             as.numeric(unlist(data[max(i-1,1):1,var])),
             w,
@@ -540,14 +669,14 @@ for(year in years){
           
           ## drop-off of last-two available game's data versus weighted average
           dataLG[i,var] <- as.numeric(na.omit(unlist(data[i:1,var])))[1] -
-                           datatemp[i,var]
+            datatemp[i,var]
         }
       }
       colnames(dataLG) <- paste0(colnames(dataLG),
                                  "LastGame")
       data <- bind_cols(datatemp,dataLG)
-        data$year <- as.numeric(year)
-        new_gl <- bind_rows(new_gl,data)
+      data$year <- as.numeric(year)
+      new_gl <- bind_rows(new_gl,data)
     }
   }
 }
@@ -714,8 +843,8 @@ print(nacols)
 ################################################################################
 
 
-  ## make a new Z matrix to replace in the super fit for random intercepts
-  ## quickly automates this process
+## make a new Z matrix to replace in the super fit for random intercepts
+## quickly automates this process
 
 
 predict2 <- function(fit,
@@ -794,7 +923,8 @@ years2keep <-
     '2022',
     '2023',
     '2024',
-    '2025'
+    '2025',
+    '2026'
   )
 yrz <- foreach(year = years2keep,
                .combine = 'cbind') %do% {
@@ -808,16 +938,53 @@ load('no_featreduc_vars.RData')
 no_featreduc_vars <- 
   no_featreduc_vars[!(no_featreduc_vars == 'numberGameTeamSeason.x')]
 
+## Function to save predictions with date and matchup info
+save_predictions_to_csv <- function(predictions, 
+                                    matchups, 
+                                    prediction_type,
+                                    dir_prefix) {
+  try({
+  # Create data frame with predictions
+  pred_df <- data.frame(
+    Date = Sys.Date(),
+    AwayTeam = matchups[, 1],
+    HomeTeam = matchups[, 2],
+    PredictionPointEstimate = predictions,
+    stringsAsFactors = FALSE
+  )
+  
+  # Define file path
+  file_path <- paste0(dir_prefix, "/predictions_", prediction_type, ".csv")
+  
+  # Append to existing file or create new one
+  if (file.exists(file_path)) {
+    existing <- read.csv(file_path)
+    combined <- rbind(existing, pred_df)
+    write.csv(combined, file_path, row.names = FALSE)
+  } else {
+    write.csv(pred_df, file_path, row.names = FALSE)
+  }
+  
+  return(pred_df)
+  }, silent = TRUE)
+}
+
 ################################################################################
 ## ## Posterior-Predictive on Absolute Scale 
 ################################################################################
-  
+
 ## overtime predictions
 load('stacked_model_overtime.RData')
 
 ## proportion of overtime games that go past single overtime
 alph <- 0.008013314 / (0.05116193 + 0.008013314) 
 ot_preds <- ((predict2(stacked_model,use_randint = F, typ = 'prob')))
+save_predictions_to_csv(
+  predictions = ot_preds,
+  matchups = matchups_og,
+  prediction_type = "overtime",
+  dir_prefix = dir_prefix
+)
 ot_preds2 <- alph * ot_preds
 ot_preds <- ot_preds - ot_preds2
 ot_preds <- cbind(1-ot_preds-ot_preds2,ot_preds,ot_preds2)
@@ -831,576 +998,600 @@ if(any(ot_preds < 0)){
   print("Successful Data Update")
 } else {
   
-rm(stacked_model)
+  rm(stacked_model)
   
-## points-per-48 predictions, scaled by overtime predictions
-load('stacked_model_gaussian.RData')
-linear_sigma <- stacked_model$super_fit$data$final_fit$tau
-
-my_preds_per48 <- as.numeric((predict2(stacked_model)))
-my_preds_linear <- sapply(1:length(my_preds_per48),function(p){
-  my_preds_per48[p]*(ot_preds[p,1]) + 
-    my_preds_per48[p]*(265/240)*ot_preds[p,2] + 
-    my_preds_per48[p]*(290/240)*ot_preds[p,3]
-})
-my_preds_per48 <- rep(my_preds_per48,each = 81)
-
-
-## average minutes per game
-(avg_time <- sum((c(0.9408248,0.05116193,0.008013314) * 
-                    c(48, (48+5), (48+10)))))
-sigmaSq0 <-  max(1e-64, 17.72642^2 - 
-             stacked_model$super_fit$data$final_fit$tau^2)
-rm(stacked_model)
-
-## get vegas predictions, based on log model predictions in fact
-load('stacked_model_log.RData')
-
-## Include variable for predicted minutes played,
-## plug-in avg time, since this is just temporary
-## we re-load the model, plug in the posterior-mean of overtime draws later
-## to make our real poisson predictions
-## this is just to get a meaningful spread of potential vegas predictions 
-## for making potential decisions on
-df$minutesPlayedPer48 <-  
-  0
-my_preds <- as.numeric(log(predict2(stacked_model,use_randint = F)))
-vegas_preds <- c(sapply(exp(my_preds),function(x){
-  x <- round(x)
-  seq(x - 20, x + 20, 0.5)
-}))
-rm(stacked_model)
-vegas_preds_per48 <- vegas_preds*(48/avg_time)
-
-## Load model and posterior draws of variance parameters
-load('stacked_stan_gaussian.RData')
-dr <- stacked_stan$draws()
-posterior_draws <- 
-  cbind(c(as.data.frame(dr[,,2])[-c(1:2000),1],
-          as.data.frame(dr[,,2])[-c(1:2000),2]),
-        c(as.data.frame(dr[,,3])[-c(1:2000),1],
-          as.data.frame(dr[,,3])[-c(1:2000),1]))
-# posterior_draws <- cbind(
-#   c(stacked_stan@sim$samples[[1]]$dispersion[-c(1:2000)],
-#     stacked_stan@sim$samples[[2]]$dispersion[-c(1:2000)]),
-#   c(stacked_stan@sim$samples[[1]]$sigmaSq_etahat[-c(1:2000)],
-#     stacked_stan@sim$samples[[2]]$sigmaSq_etahat[-c(1:2000)]))
-
-## Estimate of correlation
-rho <-  0.8178977
-
-## Doesn't change
-rho_prior_mean <- mean(atanh(rbeta(5000000,2.25,1.5)))
-rho_prior_var <- var(atanh(rbeta(5000000,2.25,1.5)))
-
-## Prior on rho was estimated from 629 observations in 2022-2023
-post_rho_sd <- sqrt(1/(1/rho_prior_var + (629-3)))
-post_rho_mean <- (rho*(629-3) + rho_prior_mean/rho_prior_var)*post_rho_sd^2
-posterior_predictive_linear <- foreach(i = 1:nrow(posterior_draws),
-                                       .combine = 'rbind') %do% {
-                                         disp <- posterior_draws[i,1]
-                                         
-   ## divide by proportion of variability explained by vegas already
-   ## what is the proportion of variability explained by vegas,
-   ## that can't be explained simply because they are predicting the same thing
-   ## what information from vegas alone is present in our predictions?
-                                         sigmaSq_etahat <- posterior_draws[i,2]
-                                         var_eta_given_y <- 1/(1/disp + 
-                                                                 1/sigmaSq0)
-                                         var <- 1/(1/(sigmaSq0) + 1/
-                                                     (sigmaSq_etahat + 
-                                                        var_eta_given_y))
-                                         w1 <- var/sigmaSq0
-                                         w2 <- var/(sigmaSq_etahat + 
-                                                      var_eta_given_y)
-                                         eta_sampled <- 
+  ## points-per-48 predictions, scaled by overtime predictions
+  load('stacked_model_gaussian.RData')
+  linear_sigma <- stacked_model$super_fit$data$final_fit$tau
+  
+  my_preds_per48 <- as.numeric((predict2(stacked_model)))
+  my_preds_linear <- sapply(1:length(my_preds_per48),function(p){
+    my_preds_per48[p]*(ot_preds[p,1]) + 
+      my_preds_per48[p]*(265/240)*ot_preds[p,2] + 
+      my_preds_per48[p]*(290/240)*ot_preds[p,3]
+  })
+  save_predictions_to_csv(
+    predictions = my_preds_linear,
+    matchups = matchups_og,
+    prediction_type = "linear",
+    dir_prefix = dir_prefix
+  )
+  my_preds_per48 <- rep(my_preds_per48,each = 81)
+  
+  
+  ## average minutes per game
+  (avg_time <- sum((c(0.9408248,0.05116193,0.008013314) * 
+                      c(48, (48+5), (48+10)))))
+  sigmaSq0 <-  max(1e-64, 17.72642^2 - 
+    stacked_model$super_fit$data$final_fit$tau^2)
+  rm(stacked_model)
+  
+  ## get vegas predictions, based on log model predictions in fact
+  load('stacked_model_log.RData')
+  
+  ## Include variable for predicted minutes played,
+  ## plug-in avg time, since this is just temporary
+  ## we re-load the model, plug in the posterior-mean of overtime draws later
+  ## to make our real poisson predictions
+  ## this is just to get a meaningful spread of potential vegas predictions 
+  ## for making potential decisions on
+  df$minutesPlayedPer48 <-  
+    0
+  my_preds <- as.numeric(log(predict2(stacked_model,use_randint = F)))
+  vegas_preds <- c(sapply(exp(my_preds),function(x){
+    x <- round(x)
+    seq(x - 20, x + 20, 0.5)
+  }))
+  rm(stacked_model)
+  vegas_preds_per48 <- vegas_preds*(48/avg_time)
+  
+  ## Load model and posterior draws of variance parameters
+  load('stacked_stan_gaussian.RData')
+  dr <- stacked_stan$draws()
+  posterior_draws <- 
+    cbind(c(as.data.frame(dr[,,2])[-c(1:2000),1],
+            as.data.frame(dr[,,2])[-c(1:2000),2]),
+          c(as.data.frame(dr[,,3])[-c(1:2000),1],
+            as.data.frame(dr[,,3])[-c(1:2000),1]))
+  # posterior_draws <- cbind(
+  #   c(stacked_stan@sim$samples[[1]]$dispersion[-c(1:2000)],
+  #     stacked_stan@sim$samples[[2]]$dispersion[-c(1:2000)]),
+  #   c(stacked_stan@sim$samples[[1]]$sigmaSq_etahat[-c(1:2000)],
+  #     stacked_stan@sim$samples[[2]]$sigmaSq_etahat[-c(1:2000)]))
+  
+  ## Estimate of correlation
+  rho <-  0.8178977
+  
+  ## Doesn't change
+  rho_prior_mean <- mean(atanh(rbeta(5000000,2.25,1.5)))
+  rho_prior_var <- var(atanh(rbeta(5000000,2.25,1.5)))
+  
+  ## Prior on rho was estimated from 629 observations in 2022-2023
+  post_rho_sd <- sqrt(1/(1/rho_prior_var + (629-3)))
+  post_rho_mean <- (rho*(629-3) + rho_prior_mean/rho_prior_var)*post_rho_sd^2
+  posterior_predictive_linear <- foreach(i = 1:nrow(posterior_draws),
+                                         .combine = 'rbind') %do% {
+                                           disp <- posterior_draws[i,1]
+                                           
+                                           ## divide by proportion of variability explained by vegas already
+                                           ## what is the proportion of variability explained by vegas,
+                                           ## that can't be explained simply because they are predicting the same thing
+                                           ## what information from vegas alone is present in our predictions?
+                                           sigmaSq_etahat <- posterior_draws[i,2]
+                                           var_eta_given_y <- 1/(1/disp + 
+                                                                   1/sigmaSq0)
+                                           var <- 1/(1/(sigmaSq0) + 1/
+                                                       (sigmaSq_etahat + 
+                                                          var_eta_given_y))
+                                           w1 <- var/sigmaSq0
+                                           w2 <- var/(sigmaSq_etahat + 
+                                                        var_eta_given_y)
+                                           eta_sampled <- 
+                                             rnorm(length(my_preds_per48))*
+                                             sqrt(var + 
+                                                    2*tanh(
+                                                      rnorm(1, 
+                                                            post_rho_mean, 
+                                                            post_rho_sd))*
+                                                    w1*
+                                                    w2*
+                                                    sqrt(sigmaSq0)*
+                                                    sqrt((sigmaSq_etahat + 
+                                                            var_eta_given_y))
+                                             ) + 
+                                             (my_preds_per48 /  
+                                                (sigmaSq_etahat + 
+                                                   var_eta_given_y) + 
+                                                vegas_preds_per48 / 
+                                                (sigmaSq0)) * var
+                                           
                                            rnorm(length(my_preds_per48))*
-                                           sqrt(var + 
-                                                2*tanh(
-                                                  rnorm(1, 
-                                                        post_rho_mean, 
-                                                        post_rho_sd))*
-                                                  w1*
-                                                  w2*
-                                                  sqrt(sigmaSq0)*
-                                                  sqrt((sigmaSq_etahat + 
-                                                          var_eta_given_y))
-                                            ) + 
-                                           (my_preds_per48 /  
-                                              (sigmaSq_etahat + 
-                                                 var_eta_given_y) + 
-                                              vegas_preds_per48 / 
-                                              (sigmaSq0)) * var
-                                         
-                                         rnorm(length(my_preds_per48))*
-                                           sqrt(disp) + eta_sampled
-                                       } 
-
-
-
-################################################################################
-## ## Incorporate overtime posterior predictive
-################################################################################
-
-load('stacked_stan_overtime.RData')
-dr <- stacked_stan$draws()
-posterior_draws <- 
-  cbind(c(as.data.frame(dr[,,dim(dr)[3]])[-c(1:2000),1],
-          as.data.frame(dr[,,dim(dr)[3]])[-c(1:2000),1]))
-# posterior_draws <- 
-#   cbind(c(stacked_stan@sim$samples[[1]]$sigma_etahat[-c(1:2000)],
-#   stacked_stan@sim$samples[[2]]$sigma_etahat[-c(1:2000)]))
-rm(stacked_stan, dr)
-my_preds <- ot_preds[,2] + ot_preds[,3]
-vegas_preds_ot <- 0.05800569 
-sigmaSq0 <- 1/(16223*vegas_preds_ot * (1 - vegas_preds_ot))
-logit <- function(x)log(x/(1-x))
-
-## Posterior predictiveof overtime draws
-posterior_predictive_scaled <- foreach(i = 1:nrow(posterior_draws),
-                                       .combine = 'rbind') %do% {
-                                         
-                                         sigma_etahat <- posterior_draws[i,1]
-                                         
-                                         var_eta_given_y <- 
-                                           1/((16223*my_preds*(1-my_preds)) + 
-                                                                 1/sigmaSq0)
-                                         var <- 1/(1/(sigmaSq0) + 
-                                                     1/(sigma_etahat^2 + 
-                                                        var_eta_given_y))
-                                         
-                                         eta_sampled <- rnorm(length(my_preds))*
-                                           sqrt(var) + 
-                                           (logit(my_preds) / 
-                                              (sigma_etahat^2 + 
-                                               var_eta_given_y) + 
-                                              logit(vegas_preds_ot) / 
-                                              (sigmaSq0)) * var
-                                         
-                                         eta_sampled
-                                       }
-posterior_predictive_probs <- 1/(1+exp(-posterior_predictive_scaled))[,
-                                    rep(1:ncol(posterior_predictive_scaled),
-                                        each = 81)]
-post_ot_short <- 1/(1+exp(-colMeans(posterior_predictive_scaled)))
-prob_ot <- rep(post_ot_short, each = 81)
-
-## our posterior draws are united with posterior predictive of overtime
-posterior_predictive_linear <- 
-  posterior_predictive_linear *
-  (1 + posterior_predictive_probs*(1-alph)*5/48 + 
-       posterior_predictive_probs*alph*10/48)
-cum_probs <- t(sapply(1:ncol(posterior_predictive_linear),
-                      function(i){
-                        x <- posterior_predictive_linear[,i]
-                        vegas_pred <- vegas_preds[i]
-                        c(mean(x < (vegas_pred)),
-                          mean(x > (vegas_pred)))
-                      }))
-post_sd_linear <- apply(posterior_predictive_linear,2,sd)
-map <- apply(posterior_predictive_linear,2,mean)
-colnames(cum_probs) <- c("P(mcmc < line)","P(mcmc > line)")
-
-## P(mcmc < spread) means spread is too much in favor of home team, bet over
-## P(mcmc > spread) means spread is too much in favor of away team, bet under
-
-## mu0 how much will home team win by
-## mu how much I think they will win by
-## post mean: the bayesian estimate of how much they will win by
-p_win <- apply(cum_probs,1,max)
-p_lose <- apply(cum_probs,1,min)
-bet <- ifelse(.909*p_win - 1*p_lose > cutoff,
-              ifelse(cum_probs[,1] < cum_probs[,2],
-                     "bet over",
-                     "bet under"),
-              "don't bet")
-post_map <- map
-absscale <- cbind(cum_probs,vegas_preds,rep(my_preds_linear,each = 81),
-                  post_map,.909*p_win - 1*p_lose,bet)
-colnames(absscale)[4] <- "my_preds"
-
-
-################################################################################
-## ## Posterior-Predictive on Log-Scale
-################################################################################
-
-## Raw predictions per 48 minutes
-load('stacked_model_log.RData')
-tau <- stacked_model$super_fit$data$final_fit$tau
-df$minutesPlayedPer48 <- 0
-
-## Regulation time
-my_preds_a <- exp(as.numeric(log(predict2(stacked_model,
-                                          dff = df, 
-                                          use_randint = T))))
-my_preds_a_pois <- (my_preds_a / tau^2)
-df$minutesPlayedPer48 <- log((48+5)/48)
-
-## Overtime
-my_preds_b <- exp(as.numeric(log(predict2(stacked_model, 
-                                          dff = df, 
-                                          use_randint = T))))
-my_preds_b_pois <- (my_preds_b / tau^2)
-df$minutesPlayedPer48 <- log((48+10)/48)
-
-## Double overtime
-my_preds_c <- exp(as.numeric(log(predict2(stacked_model, 
-                                          use_randint = T, 
-                                          dff = df))))
-my_preds_c_pois <- (my_preds_c / tau^2)
-my_preds_log <- log(
-              (1-post_ot_short)*(my_preds_a) +
-              (1-alph)*post_ot_short*(my_preds_b) +
-              alph*post_ot_short*(my_preds_c)
-              )
-my_preds_total <- exp(my_preds_log)*0.5 + my_preds_linear*0.5
-my_preds <- rep(my_preds_log, each = 81)
-sigmaSq0s <- 0.08112754^2  -  1/(stacked_model$super_fit$data$final_fit$tau^2 * 
-                                   vegas_preds) # variance of log pois
-
-## posterior distributions for parameters of interest
-load('stacked_stan_log.RData')
-#stacked_stan <- stacked$stacked_stan
-dr <- stacked_stan$draws()
-posterior_draws <- 
-  cbind(1,
-        (c(as.data.frame(dr[,,dim(dr)[3]])[-c(1:2000),1],
-           as.data.frame(dr[,,dim(dr)[3]])[-c(1:2000),2])/mean(my_preds_total)))
-# posterior_draws <- cbind(1,
-#                       c(stacked_stan@sim$samples[[1]]$sigma_etahat[-c(1:2000)],
-#                         stacked_stan@sim$samples[[2]]$sigma_etahat[-c(1:2000)]))
-my_preds_pois <- my_preds-log(tau^2)
-vegas_preds_pois <- log(vegas_preds)-log(tau^2)
-## extracted from prior analysis - the estimated correlation coefficient
-rho <- 0.9783063
-post_rho_mean <- (rho*(629-3) + rho_prior_mean/rho_prior_var)*post_rho_sd^2
-## basic estimate of how much the posterior sd tends to be overestimated
-posterior_predictive_log <- foreach(i = 1:nrow(posterior_draws),
-                                       .combine = 'rbind') %do% {
-                                         disp <- posterior_draws[i,1]
-                                         
-                                        
-                                         my_preds_pois_temp <- my_preds_pois
-                                         
-                                         
-                                         sigma_etahat <- posterior_draws[i,2] / 
-                                           tau
-                                         var_eta_given_y <- 1/
-                                           (exp(my_preds_pois_temp) + 
-                                              1/sigmaSq0s)
-                                         
-                                         
-                                         
-                                         var <- 1/(1/(sigmaSq0s) + 
-                                                     1/(sigma_etahat^2 + 
-                                                     var_eta_given_y))
-                                         
-                                         w1 <- var/sigmaSq0s
-                                         w2 <- var/(sigma_etahat^2 + 
-                                                      var_eta_given_y)
-                                         eta_sampled <- rnorm(
-                                           length(my_preds_pois_temp))*
-                                           sqrt(var + 
-                                                  2*tanh(rnorm(1, 
-                                                               post_rho_mean, 
-                                                               post_rho_sd))*
-                                                  w1*
-                                                  w2*
-                                                  sqrt(sigmaSq0s)*
-                                                  sqrt((sigma_etahat^2 + 
-                                                          var_eta_given_y))
-                                           ) + 
-                                           (my_preds_pois_temp / 
-                                              (sigma_etahat^2+var_eta_given_y) + 
-                                            vegas_preds_pois / 
-                                              (sigmaSq0s)) * var
-                                         
-                                         tau^2 * rpois(length(eta_sampled),
-                                                       exp(eta_sampled))
-                                         
-                                       }
-cum_probs <- t(sapply(1:ncol(posterior_predictive_log),
-                   function(i){
-                     x <- posterior_predictive_log[,i]
-                     vegas_pred <- vegas_preds[i]
-                     c(mean(x < vegas_pred),
-                       mean(x > vegas_pred))
-                   }))
-map <- apply(posterior_predictive_log,2,mean)
-post_sd_log <- apply(posterior_predictive_log,2,sd)
-colnames(cum_probs) <- c("P(mcmc < line)","P(mcmc > line)")
-
-## mu0 how much will home team win by
-## mu how much I think they will win by
-## post mean: the bayesian estimate of how much they will win by
-p_win <- apply(cum_probs,1,max)
-p_lose <- apply(cum_probs,1,min)
-bet <- ifelse((.909*p_win - 1*p_lose) > cutoff,
-              ifelse(cum_probs[,1] < cum_probs[,2],
-                     "bet over",
-                     "bet under"),
-              "don't bet")
-
-## the 'expectation' ie sum of x * p(x)
-post_map <- map
-logscale <- cbind(cum_probs,
-                   vegas_preds,
-                   exp(my_preds),
-                   post_map,.909*p_win - 1*p_lose,bet)
-post_draws_log <- posterior_predictive_log
-colnames(logscale)[4] <- "my_preds"
-
-
-################################################################################
-## ## Organize OU output
-################################################################################
-
-
-## Finally....
-## make bet when log scale and abs scale are in agreement
-absscale <- as.data.frame(absscale)
-logscale <- as.data.frame(logscale)
-
-
-colnames(logscale) <- colnames(absscale)
-final_bet <- cbind(absscale[,'bet'],
-                   logscale[,'bet']) %>%
-  apply(1,function(x)if(x[1] == x[2]) x[1] else "don't bet")
-final_overunder <- cbind(rep(new_gl_merged$dateGame.x,each = 81),
-                         matchups_og[rep(1:nrow(matchups_og),
-                                         each = 81),],
-                         absscale$bet,
-                         logscale$bet,
-                         final_bet,
-                         absscale$my_preds,
-                         logscale$my_preds,
-                         vegas_preds,
-               absscale[,'post_map'],
-               logscale[,'post_map'],
-               post_sd_linear,
-               post_sd_log,
-               as.character(Sys.time()))
-
-colnames(final_overunder) <- 
-                   c("Date",
-                     "AwayTeam",
-                     "HomeTeam",
-                     "BetAbs",
-                     "BetLog",
-                     "FinalBet",
-                     "Predict Abs",
-                     "Predict Log",
-                     "Over/Under",
-                     "Posterior Abs",
-                     "Posterior Log",
-                     "SD Abs",
-                     "SD Log",
-                     "DateBet")
-
-## Save history of decision rules
-# past_data <- read.csv("history_of_bets2024_overunder.csv",
-#                       stringsAsFactors = F)
-# rownames(final_overunder) <- NULL
-# colnames(past_data) <- colnames(final_overunder)
-# write.csv(unique(rbind(past_data,final_overunder)),
-#           file = "history_of_bets2024_overunder.csv",
-#                        row.names = F)
-
-cat("\n\n-----------------------------------------\n\n")
-
-################################################################################
-## ## Spread 
-################################################################################
-
-load('stacked_model_spread.RData')
-my_preds <- as.numeric((predict2(stacked_model,
-                                 use_randint = T,
-                                 switch_z_sign =  T)))
-my_preds_raw <- my_preds
-vegas_preds_spread <- c(sapply(my_preds,function(x){
-  x <- round(x)
-  seq(x - 20, x + 20, 0.5)
-}))
-my_preds <- rep(my_preds, each = 81) 
-
-## we actually KNOW the true variance, luckily, from prior analysis and VSTs
-sigmaSq0 <-  (12.39497)^2 - stacked_model$super_fit$data$final_fit$tau^2
-if(sigmaSq0 < 0){
-  sigmaSq0 <- (12.39497)^2  - mse(response(stacked_model),
-                                  predict(stacked_model))
-  if(sigmaSq0 < 0){
-    sigmaSq0 <- abs(sigmaSq0)/2 # damn, this sucks
-    print("Damn our model sucks")
-    Sys.sleep(5)
-  }
-} 
-
-
-## extract posterior draws of variance components
-rm(stacked_model)
-load('stacked_stan_spread.RData')
-dr <- stacked_stan$draws()
-posterior_draws <- 
-  cbind(c(as.data.frame(dr[,,2])[-c(1:2000),1],
-          as.data.frame(dr[,,2])[-c(1:2000),2]),
-        c(as.data.frame(dr[,,3])[-c(1:2000),1],
-          as.data.frame(dr[,,3])[-c(1:2000),1]))
-
-## fixed prior correlation based on based analysis
-rho <- sqrt(1-0.5342973) # = 0.6824242
-post_rho_mean <- (rho*(629-3) + rho_prior_mean/rho_prior_var)*post_rho_sd^2
-posterior_predictive_spread <- foreach(i = 1:nrow(posterior_draws),
-                                       .combine = 'rbind') %do% {
-                                         disp <- posterior_draws[i,1]
-                                         sigmaSq_etahat <- posterior_draws[i,2]
-                                         var_eta_given_y <- 1/(1/sigmaSq0 + 
-                                                                 1/disp)
-                          
-                                         
-                                         var <- 1/(1/(sigmaSq0) + 
-                                                   1/(sigmaSq_etahat + 
-                                                        var_eta_given_y))
-                                         
-                                         w1 <- var/sigmaSq0
-                                         w2 <- var/(sigmaSq_etahat + 
-                                                      var_eta_given_y)
-                                         eta_sampled <- rnorm(length(my_preds))*
-                                           sqrt(var + 
-                                                  2*tanh(rnorm(1, 
-                                                               post_rho_mean, 
-                                                               post_rho_sd))*
-                                                  w1*
-                                                  w2*
-                                                  sqrt(sigmaSq0)*
-                                                  sqrt((sigmaSq_etahat + 
-                                                          var_eta_given_y))
-                                           ) + 
-                                           (my_preds / (sigmaSq_etahat + 
-                                                          var_eta_given_y) +
-                                              vegas_preds_spread / (sigmaSq0)) * 
-                                           var
-                                         y <- 
-                                           rnorm(length(my_preds))*sqrt(disp) + 
+                                             sqrt(disp) + eta_sampled
+                                         } 
+  
+  
+  
+  ################################################################################
+  ## ## Incorporate overtime posterior predictive
+  ################################################################################
+  
+  load('stacked_stan_overtime.RData')
+  dr <- stacked_stan$draws()
+  posterior_draws <- 
+    cbind(c(as.data.frame(dr[,,dim(dr)[3]])[-c(1:2000),1],
+            as.data.frame(dr[,,dim(dr)[3]])[-c(1:2000),1]))
+  # posterior_draws <- 
+  #   cbind(c(stacked_stan@sim$samples[[1]]$sigma_etahat[-c(1:2000)],
+  #   stacked_stan@sim$samples[[2]]$sigma_etahat[-c(1:2000)]))
+  rm(stacked_stan, dr)
+  my_preds <- ot_preds[,2] + ot_preds[,3]
+  vegas_preds_ot <- 0.05800569 
+  sigmaSq0 <- 1/(16223*vegas_preds_ot * (1 - vegas_preds_ot))
+  logit <- function(x)log(x/(1-x))
+  
+  ## Posterior predictiveof overtime draws
+  posterior_predictive_scaled <- foreach(i = 1:nrow(posterior_draws),
+                                         .combine = 'rbind') %do% {
+                                           
+                                           sigma_etahat <- posterior_draws[i,1]
+                                           
+                                           var_eta_given_y <- 
+                                             1/((16223*my_preds*(1-my_preds)) + 
+                                                  1/sigmaSq0)
+                                           var <- 1/(1/(sigmaSq0) + 
+                                                       1/(sigma_etahat^2 + 
+                                                            var_eta_given_y))
+                                           
+                                           eta_sampled <- rnorm(length(my_preds))*
+                                             sqrt(var) + 
+                                             (logit(my_preds) / 
+                                                (sigma_etahat^2 + 
+                                                   var_eta_given_y) + 
+                                                logit(vegas_preds_ot) / 
+                                                (sigmaSq0)) * var
+                                           
                                            eta_sampled
-                                         y
-                                       }
-cum_probs_spread_raw <- t(sapply(1:length(my_preds),function(k){
-  c(mean(posterior_predictive_spread[,k] > vegas_preds_spread[k] 
-         ),
+                                         }
+  posterior_predictive_probs <- 1/(1+exp(-posterior_predictive_scaled))[,
+                                                                        rep(1:ncol(posterior_predictive_scaled),
+                                                                            each = 81)]
+  post_ot_short <- 1/(1+exp(-colMeans(posterior_predictive_scaled)))
+  prob_ot <- rep(post_ot_short, each = 81)
+  
+  ## our posterior draws are united with posterior predictive of overtime
+  posterior_predictive_linear <- 
+    posterior_predictive_linear *
+    (1 + posterior_predictive_probs*(1-alph)*5/48 + 
+       posterior_predictive_probs*alph*10/48)
+  cum_probs <- t(sapply(1:ncol(posterior_predictive_linear),
+                        function(i){
+                          x <- posterior_predictive_linear[,i]
+                          vegas_pred <- vegas_preds[i]
+                          c(mean(x < (vegas_pred)),
+                            mean(x > (vegas_pred)))
+                        }))
+  post_sd_linear <- apply(posterior_predictive_linear,2,sd)
+  map <- apply(posterior_predictive_linear,2,mean)
+  colnames(cum_probs) <- c("P(mcmc < line)","P(mcmc > line)")
+  
+  ## P(mcmc < spread) means spread is too much in favor of home team, bet over
+  ## P(mcmc > spread) means spread is too much in favor of away team, bet under
+  
+  ## mu0 how much will home team win by
+  ## mu how much I think they will win by
+  ## post mean: the bayesian estimate of how much they will win by
+  p_win <- apply(cum_probs,1,max)
+  p_lose <- apply(cum_probs,1,min)
+  bet <- ifelse(.909*p_win - 1*p_lose > cutoff,
+                ifelse(cum_probs[,1] < cum_probs[,2],
+                       "bet over",
+                       "bet under"),
+                "don't bet")
+  post_map <- map
+  absscale <- cbind(cum_probs,vegas_preds,rep(my_preds_linear,each = 81),
+                    post_map,.909*p_win - 1*p_lose,bet)
+  colnames(absscale)[4] <- "my_preds"
+  
+  
+  ################################################################################
+  ## ## Posterior-Predictive on Log-Scale
+  ################################################################################
+  
+  ## Raw predictions per 48 minutes
+  load('stacked_model_log.RData')
+  tau <- stacked_model$super_fit$data$final_fit$tau
+  df$minutesPlayedPer48 <- 0
+  
+  ## Regulation time
+  my_preds_a <- exp(as.numeric(log(predict2(stacked_model,
+                                            dff = df, 
+                                            use_randint = T))))
+  my_preds_a_pois <- (my_preds_a / tau^2)
+  df$minutesPlayedPer48 <- log((48+5)/48)
+  
+  ## Overtime
+  my_preds_b <- exp(as.numeric(log(predict2(stacked_model, 
+                                            dff = df, 
+                                            use_randint = T))))
+  my_preds_b_pois <- (my_preds_b / tau^2)
+  df$minutesPlayedPer48 <- log((48+10)/48)
+  
+  ## Double overtime
+  my_preds_c <- exp(as.numeric(log(predict2(stacked_model, 
+                                            use_randint = T, 
+                                            dff = df))))
+  my_preds_c_pois <- (my_preds_c / tau^2)
+  my_preds_log <- log(
+    (1-post_ot_short)*(my_preds_a) +
+      (1-alph)*post_ot_short*(my_preds_b) +
+      alph*post_ot_short*(my_preds_c)
+  )
+  save_predictions_to_csv(
+    predictions = exp(my_preds_log),
+    matchups = matchups_og,
+    prediction_type = "log",
+    dir_prefix = dir_prefix
+  )
+  my_preds_total <- exp(my_preds_log)*0.5 + my_preds_linear*0.5
+  my_preds <- rep(my_preds_log, each = 81)
+  sigmaSq0s <- 0.08112754^2  -  1/(stacked_model$super_fit$data$final_fit$tau^2 * 
+                                     vegas_preds) # variance of log pois
+  
+  ## posterior distributions for parameters of interest
+  load('stacked_stan_log.RData')
+  #stacked_stan <- stacked$stacked_stan
+  dr <- stacked_stan$draws()
+  posterior_draws <- 
+    cbind(1,
+          c(as.data.frame(dr[,,dim(dr)[3]])[-c(1:2000),1],
+            as.data.frame(dr[,,dim(dr)[3]])[-c(1:2000),2])/mean(my_preds_total))
+  # posterior_draws <- cbind(1,
+  #                       c(stacked_stan@sim$samples[[1]]$sigma_etahat[-c(1:2000)],
+  #                         stacked_stan@sim$samples[[2]]$sigma_etahat[-c(1:2000)]))
+  my_preds_pois <- my_preds-log(tau^2)
+  vegas_preds_pois <- log(vegas_preds)-log(tau^2)
+  ## extracted from prior analysis - the estimated correlation coefficient
+  rho <- 0.9783063
+  post_rho_mean <- (rho*(629-3) + rho_prior_mean/rho_prior_var)*post_rho_sd^2
+  ## basic estimate of how much the posterior sd tends to be overestimated
+  posterior_predictive_log <- foreach(i = 1:nrow(posterior_draws),
+                                      .combine = 'rbind') %do% {
+                                        disp <- posterior_draws[i,1]
+                                        
+                                        
+                                        my_preds_pois_temp <- my_preds_pois
+                                        
+                                        
+                                        sigma_etahat <- posterior_draws[i,2] / 
+                                          tau
+                                        var_eta_given_y <- 1/
+                                          (exp(my_preds_pois_temp) + 
+                                             1/sigmaSq0s)
+                                        
+                                        
+                                        
+                                        var <- 1/(1/(sigmaSq0s) + 
+                                                    1/(sigma_etahat^2 + 
+                                                         var_eta_given_y))
+                                        
+                                        w1 <- var/sigmaSq0s
+                                        w2 <- var/(sigma_etahat^2 + 
+                                                     var_eta_given_y)
+                                        eta_sampled <- rnorm(
+                                          length(my_preds_pois_temp))*
+                                          sqrt(var + 
+                                                 2*tanh(rnorm(1, 
+                                                              post_rho_mean, 
+                                                              post_rho_sd))*
+                                                 w1*
+                                                 w2*
+                                                 sqrt(sigmaSq0s)*
+                                                 sqrt((sigma_etahat^2 + 
+                                                         var_eta_given_y))
+                                          ) + 
+                                          (my_preds_pois_temp / 
+                                             (sigma_etahat^2+var_eta_given_y) + 
+                                             vegas_preds_pois / 
+                                             (sigmaSq0s)) * var
+                                        
+                                        tau^2 * rpois(length(eta_sampled),
+                                                      exp(eta_sampled))
+                                        
+                                      }
+  cum_probs <- t(sapply(1:ncol(posterior_predictive_log),
+                        function(i){
+                          x <- posterior_predictive_log[,i]
+                          vegas_pred <- vegas_preds[i]
+                          c(mean(x < vegas_pred),
+                            mean(x > vegas_pred))
+                        }))
+  map <- apply(posterior_predictive_log,2,mean)
+  post_sd_log <- apply(posterior_predictive_log,2,sd)
+  colnames(cum_probs) <- c("P(mcmc < line)","P(mcmc > line)")
+  
+  ## mu0 how much will home team win by
+  ## mu how much I think they will win by
+  ## post mean: the bayesian estimate of how much they will win by
+  p_win <- apply(cum_probs,1,max)
+  p_lose <- apply(cum_probs,1,min)
+  bet <- ifelse((.909*p_win - 1*p_lose) > cutoff,
+                ifelse(cum_probs[,1] < cum_probs[,2],
+                       "bet over",
+                       "bet under"),
+                "don't bet")
+  
+  ## the 'expectation' ie sum of x * p(x)
+  post_map <- map
+  logscale <- cbind(cum_probs,
+                    vegas_preds,
+                    exp(my_preds),
+                    post_map,.909*p_win - 1*p_lose,bet)
+  post_draws_log <- posterior_predictive_log
+  colnames(logscale)[4] <- "my_preds"
+  
+  
+  ################################################################################
+  ## ## Organize OU output
+  ################################################################################
+  
+  
+  ## Finally....
+  ## make bet when log scale and abs scale are in agreement
+  absscale <- as.data.frame(absscale)
+  logscale <- as.data.frame(logscale)
+  
+  
+  colnames(logscale) <- colnames(absscale)
+  final_bet <- cbind(absscale[,'bet'],
+                     logscale[,'bet']) %>%
+    apply(1,function(x)if(x[1] == x[2]) x[1] else "don't bet")
+  final_overunder <- cbind(rep(new_gl_merged$dateGame.x,each = 81),
+                           matchups_og[rep(1:nrow(matchups_og),
+                                           each = 81),],
+                           absscale$bet,
+                           logscale$bet,
+                           final_bet,
+                           absscale$my_preds,
+                           logscale$my_preds,
+                           vegas_preds,
+                           absscale[,'post_map'],
+                           logscale[,'post_map'],
+                           post_sd_linear,
+                           post_sd_log,
+                           as.character(Sys.time()))
+  
+  colnames(final_overunder) <- 
+    c("Date",
+      "AwayTeam",
+      "HomeTeam",
+      "BetAbs",
+      "BetLog",
+      "FinalBet",
+      "Predict Abs",
+      "Predict Log",
+      "Over/Under",
+      "Posterior Abs",
+      "Posterior Log",
+      "SD Abs",
+      "SD Log",
+      "DateBet")
+  
+  ## Save history of decision rules
+  # past_data <- read.csv("history_of_bets2024_overunder.csv",
+  #                       stringsAsFactors = F)
+  # rownames(final_overunder) <- NULL
+  # colnames(past_data) <- colnames(final_overunder)
+  # write.csv(unique(rbind(past_data,final_overunder)),
+  #           file = "history_of_bets2024_overunder.csv",
+  #                        row.names = F)
+  
+  cat("\n\n-----------------------------------------\n\n")
+  
+  ################################################################################
+  ## ## Spread 
+  ################################################################################
+  
+  load('stacked_model_spread.RData')
+  my_preds <- as.numeric((predict2(stacked_model,
+                                   use_randint = T,
+                                   switch_z_sign =  T)))
+  save_predictions_to_csv(
+    predictions = my_preds,
+    matchups = matchups_og,
+    prediction_type = "spread",
+    dir_prefix = dir_prefix
+  )
+  my_preds_raw <- my_preds
+  vegas_preds_spread <- c(sapply(my_preds,function(x){
+    x <- round(x)
+    seq(x - 20, x + 20, 0.5)
+  }))
+  my_preds <- rep(my_preds, each = 81) 
+  
+  ## we actually KNOW the true variance, luckily, from prior analysis and VSTs
+  sigmaSq0 <-  (12.39497)^2 - stacked_model$super_fit$data$final_fit$tau^2
+  if(sigmaSq0 < 0){
+    sigmaSq0 <- (12.39497)^2  - mse(response(stacked_model),
+                                    predict(stacked_model))
+    if(sigmaSq0 < 0){
+      sigmaSq0 <- abs(sigmaSq0)/2 # damn, this sucks
+      print("Damn our model sucks")
+      Sys.sleep(5)
+    }
+  } 
+  
+  
+  ## extract posterior draws of variance components
+  rm(stacked_model)
+  load('stacked_stan_spread.RData')
+  dr <- stacked_stan$draws()
+  posterior_draws <- 
+    cbind(c(as.data.frame(dr[,,2])[-c(1:2000),1],
+            as.data.frame(dr[,,2])[-c(1:2000),2]),
+          c(as.data.frame(dr[,,3])[-c(1:2000),1],
+            as.data.frame(dr[,,3])[-c(1:2000),1]))
+  
+  ## fixed prior correlation based on based analysis
+  rho <- sqrt(1-0.5342973) # = 0.6824242
+  post_rho_mean <- (rho*(629-3) + rho_prior_mean/rho_prior_var)*post_rho_sd^2
+  posterior_predictive_spread <- foreach(i = 1:nrow(posterior_draws),
+                                         .combine = 'rbind') %do% {
+                                           disp <- posterior_draws[i,1]
+                                           sigmaSq_etahat <- posterior_draws[i,2]
+                                           var_eta_given_y <- 1/(1/sigmaSq0 + 
+                                                                   1/disp)
+                                           
+                                           
+                                           var <- 1/(1/(sigmaSq0) + 
+                                                       1/(sigmaSq_etahat + 
+                                                            var_eta_given_y))
+                                           
+                                           w1 <- var/sigmaSq0
+                                           w2 <- var/(sigmaSq_etahat + 
+                                                        var_eta_given_y)
+                                           eta_sampled <- rnorm(length(my_preds))*
+                                             sqrt(var + 
+                                                    2*tanh(rnorm(1, 
+                                                                 post_rho_mean, 
+                                                                 post_rho_sd))*
+                                                    w1*
+                                                    w2*
+                                                    sqrt(sigmaSq0)*
+                                                    sqrt((sigmaSq_etahat + 
+                                                            var_eta_given_y))
+                                             ) + 
+                                             (my_preds / (sigmaSq_etahat + 
+                                                            var_eta_given_y) +
+                                                vegas_preds_spread / (sigmaSq0)) * 
+                                             var
+                                           y <- 
+                                             rnorm(length(my_preds))*sqrt(disp) + 
+                                             eta_sampled
+                                           y
+                                         }
+  cum_probs_spread_raw <- t(sapply(1:length(my_preds),function(k){
+    c(mean(posterior_predictive_spread[,k] > vegas_preds_spread[k] 
+    ),
     mean(posterior_predictive_spread[,k] < vegas_preds_spread[k]
-         ))
-}))
-cum_probs_homewin_raw <- sapply(1:length(my_preds),function(k){
-  mean(posterior_predictive_spread[,k] > 0)
-})
-prior_mu_logit_raw <- vegas_preds_spread
-post_map_raw <- apply(posterior_predictive_spread,2,mean)
-post_sd_raw <- apply(posterior_predictive_spread,2,sd)
-p_win_raw <- apply(cum_probs_spread_raw,1,max)
-p_lose_raw <- apply(cum_probs_spread_raw,1,min)
-betz <- apply(cum_probs_spread_raw,
-              1,function(x)if(
-                x[1] > x[2]) "favor home team" else "favor away team")
-bet_raw <- ifelse((0.909*p_win_raw - p_lose_raw) > cutoff,
-              betz,
-              "don't bet")
-
-
-################################################################################
-## ## Arcsin Square-Root proportion of points scored by home team
-################################################################################
-
-load('stacked_model_arcsin.RData')
-my_preds <- as.numeric((predict2(stacked_model,
-                                 use_randint = T,
-                                 switch_z_sign = T)))
-my_preds_expanded <- rep(my_preds, each = 81)
-hometeam_preds_expanded_raw <- (rep(my_preds_total, each = 81) + 
-                                vegas_preds_spread)/2
-vegas_preds_arcsin <- c(sapply(1:length(hometeam_preds_expanded_raw),
-                               function(j){
-  asin(sqrt((hometeam_preds_expanded_raw[j]+3/8)/(my_preds_total[
-    (j-1) %/% 81 + 1] + 3/4)))
-}))
-
-
-## code for obtaining the constant term
-# load('stacked_model_log.RData')
-# pr_tot <- predict(stacked_model, type = 'numeric')
-# act_tot <- as.numeric(response(stacked_model))
-# load('stacked_model_arcsin.RData')
-# pr <- predict(stacked_model)
-# pr_arc  <- pr
-# act_arc <- response(stacked_model)
-# z <- 2*sqrt(pr_tot)*pr_arc - 2*sqrt(act_tot)*act_arc
-# sd(z)
-# # [1] 1.182951
-# var(z) - 1
-# # [1] 0.3993731
-# qqnorm((z-mean(z))/sd(z))
-# abline(0,1)
-
-
-const <- 0.3993731*0.25/rep(my_preds_total, each = 81)
-# > mean(total_actual) - from final look 2023, same script as sigmaSq0s
-# [1] 230.5397
-# we correct for the fact that this prior is computed from average only in 2023,
-# so we adjust for the predicted total of each game instead
-sigmaSq0s <- 0.02869278^2*(rep(my_preds_total, each = 81)/230.5397) - 
-             const
-
-## = total variance - inherent variance = vegas variance
-rm(stacked_model)
-load('stacked_stan_arcsin.RData')
-dr <- stacked_stan$draws()
-posterior_draws <- 
-  cbind(c(as.data.frame(dr[,,2])[-c(1:2000),1],
-          as.data.frame(dr[,,2])[-c(1:2000),2]),
-        c(as.data.frame(dr[,,3])[-c(1:2000),1],
-          as.data.frame(dr[,,3])[-c(1:2000),1]))
-# posterior_draws <- cbind(c(stacked_stan@sim$samples[[1]]$dispersion[-c(1:2000)],
-#                       stacked_stan@sim$samples[[2]]$dispersion[-c(1:2000)]),
-#                     c(stacked_stan@sim$samples[[1]]$sigmaSq_etahat[-c(1:2000)],
-#                       stacked_stan@sim$samples[[2]]$sigmaSq_etahat[-c(1:2000)]))
-#my_preds_og <- my_preds
-rho <- 0.7996677
-post_rho_mean <- (rho*(629-3) + rho_prior_mean/rho_prior_var)*post_rho_sd^2
-posterior_predictive_arcsin <- foreach(i = 1:nrow(posterior_draws),
-                                .combine = 'rbind') %do% {
-  disp <- posterior_draws[i,1]
-  sigmaSq_etahat <- posterior_draws[i,2] 
-  var_eta_given_y <- 1/(1/sigmaSq0s + 1/disp) 
-  var <- 1/(1/(sigmaSq0s) + 1/(sigmaSq_etahat+var_eta_given_y))
-  w1 <- var/sigmaSq0s
-  w2 <- var/(sigmaSq_etahat + var_eta_given_y)
-  eta_sampled <- rnorm(length(my_preds_expanded))*
-    sqrt(var + 
-           2*tanh(rnorm(1, 
-                        post_rho_mean, 
-                        post_rho_sd))*
-           w1*
-           w2*
-           sqrt(sigmaSq0s)*
-           sqrt((sigmaSq_etahat + var_eta_given_y))
-  ) + 
-    (my_preds_expanded / (sigmaSq_etahat + var_eta_given_y) + 
-       ## this is the posterior distribution sampled of theta
-     vegas_preds_arcsin / (sigmaSq0s)) * var 
-  eta_sampled
-}
-
-################################################################################
-## ## Get Posterior Distribution of Spread 
-################################################################################
-
-half_linear_variance <- 0.25*(avg_time/48)^2*linear_sigma^2
-spread_draws <- list()
-for(k in 1:length(my_preds_expanded)){
+    ))
+  }))
+  cum_probs_homewin_raw <- sapply(1:length(my_preds),function(k){
+    mean(posterior_predictive_spread[,k] > 0)
+  })
+  prior_mu_logit_raw <- vegas_preds_spread
+  post_map_raw <- apply(posterior_predictive_spread,2,mean)
+  post_sd_raw <- apply(posterior_predictive_spread,2,sd)
+  p_win_raw <- apply(cum_probs_spread_raw,1,max)
+  p_lose_raw <- apply(cum_probs_spread_raw,1,min)
+  betz <- apply(cum_probs_spread_raw,
+                1,function(x)if(
+                  x[1] > x[2]) "favor home team" else "favor away team")
+  bet_raw <- ifelse((0.909*p_win_raw - p_lose_raw) > cutoff,
+                    betz,
+                    "don't bet")
+  
+  
+  ################################################################################
+  ## ## Arcsin Square-Root proportion of points scored by home team
+  ################################################################################
+  
+  load('stacked_model_arcsin.RData')
+  my_preds <- as.numeric((predict2(stacked_model,
+                                   use_randint = T,
+                                   switch_z_sign = T)))
+  save_predictions_to_csv(
+    predictions = my_preds,
+    matchups = matchups_og,
+    prediction_type = "arcsin",
+    dir_prefix = dir_prefix
+  )
+  my_preds_expanded <- rep(my_preds, each = 81)
+  hometeam_preds_expanded_raw <- (rep(my_preds_total, each = 81) + 
+                                    vegas_preds_spread)/2
+  vegas_preds_arcsin <- c(sapply(1:length(hometeam_preds_expanded_raw),
+                                 function(j){
+                                   asin(sqrt((hometeam_preds_expanded_raw[j]+3/8)/(my_preds_total[
+                                     (j-1) %/% 81 + 1] + 3/4)))
+                                 }))
+  
+  
+  ## code for obtaining the constant term
+  # load('stacked_model_log.RData')
+  # pr_tot <- predict(stacked_model, type = 'numeric')
+  # act_tot <- as.numeric(response(stacked_model))
+  # load('stacked_model_arcsin.RData')
+  # pr <- predict(stacked_model)
+  # pr_arc  <- pr
+  # act_arc <- response(stacked_model)
+  # z <- 2*sqrt(pr_tot)*pr_arc - 2*sqrt(act_tot)*act_arc
+  # sd(z)
+  # # [1] 1.182951
+  # var(z) - 1
+  # # [1] 0.3993731
+  # qqnorm((z-mean(z))/sd(z))
+  # abline(0,1)
+  
+  
+  const <- 0.3993731*0.25/rep(my_preds_total, each = 81)
+  # > mean(total_actual) - from final look 2023, same script as sigmaSq0s
+  # [1] 230.5397
+  # we correct for the fact that this prior is computed from average only in 2023,
+  # so we adjust for the predicted total of each game instead
+  sigmaSq0s <- 0.02869278^2*(rep(my_preds_total, each = 81)/230.5397) - 
+    const
+  
+  ## = total variance - inherent variance = vegas variance
+  rm(stacked_model)
+  load('stacked_stan_arcsin.RData')
+  dr <- stacked_stan$draws()
+  posterior_draws <- 
+    cbind(c(as.data.frame(dr[,,2])[-c(1:2000),1],
+            as.data.frame(dr[,,2])[-c(1:2000),2]),
+          c(as.data.frame(dr[,,3])[-c(1:2000),1],
+            as.data.frame(dr[,,3])[-c(1:2000),1]))
+  # posterior_draws <- cbind(c(stacked_stan@sim$samples[[1]]$dispersion[-c(1:2000)],
+  #                       stacked_stan@sim$samples[[2]]$dispersion[-c(1:2000)]),
+  #                     c(stacked_stan@sim$samples[[1]]$sigmaSq_etahat[-c(1:2000)],
+  #                       stacked_stan@sim$samples[[2]]$sigmaSq_etahat[-c(1:2000)]))
+  #my_preds_og <- my_preds
+  rho <- 0.7996677
+  post_rho_mean <- (rho*(629-3) + rho_prior_mean/rho_prior_var)*post_rho_sd^2
+  posterior_predictive_arcsin <- foreach(i = 1:nrow(posterior_draws),
+                                         .combine = 'rbind') %do% {
+                                           disp <- posterior_draws[i,1]
+                                           sigmaSq_etahat <- posterior_draws[i,2] 
+                                           var_eta_given_y <- 1/(1/sigmaSq0s + 1/disp) 
+                                           var <- 1/(1/(sigmaSq0s) + 1/(sigmaSq_etahat+var_eta_given_y))
+                                           w1 <- var/sigmaSq0s
+                                           w2 <- var/(sigmaSq_etahat + var_eta_given_y)
+                                           eta_sampled <- rnorm(length(my_preds_expanded))*
+                                             sqrt(var + 
+                                                    2*tanh(rnorm(1, 
+                                                                 post_rho_mean, 
+                                                                 post_rho_sd))*
+                                                    w1*
+                                                    w2*
+                                                    sqrt(sigmaSq0s)*
+                                                    sqrt((sigmaSq_etahat + var_eta_given_y))
+                                             ) + 
+                                             (my_preds_expanded / (sigmaSq_etahat + var_eta_given_y) + 
+                                                ## this is the posterior distribution sampled of theta
+                                                vegas_preds_arcsin / (sigmaSq0s)) * var 
+                                           eta_sampled
+                                         }
+  
+  ################################################################################
+  ## ## Get Posterior Distribution of Spread 
+  ################################################################################
+  
+  half_linear_variance <- 0.25*(avg_time/48)^2*linear_sigma^2
+  spread_draws <- list()
+  for(k in 1:length(my_preds_expanded)){
     total <- rep(my_preds_total, each = 81)[k]
     prop_home <- sample(posterior_predictive_arcsin[,k],
                         25000,
                         replace = (length(posterior_predictive_arcsin[,k]) <
-                                    25000))
+                                     25000))
     
     ## our "posterior" draw, if tau/sigma fixed, overtime ignored, 
     ## and uniform priors used
@@ -1412,7 +1603,7 @@ for(k in 1:length(my_preds_expanded)){
     total_draw <- rnorm(length(total), 
                         total, 
                         sqrt(0.25*total*tau^2 + # var quassi-poisson model
-                             half_linear_variance)) # var of linear model 
+                               half_linear_variance)) # var of linear model 
     
     ## generate normal from the posterior mean of the 
     ## arcsin-sqrt transform with var ~ 1/(4*total)
@@ -1422,256 +1613,253 @@ for(k in 1:length(my_preds_expanded)){
     home_pts <- (sin(y))^2*(total + 3/4) - 3/8
     away_pts <- total-home_pts
     spread_draws[[k]] <- home_pts - away_pts
-}
-cum_probs_spread <- t(sapply(1:length(my_preds_expanded),function(k){
-  c(mean(spread_draws[[k]] > vegas_preds_spread[k]),
-    mean(spread_draws[[k]] <  vegas_preds_spread[k]))
-}))
-cum_probs_homewin <- sapply(1:length(my_preds_expanded),function(k){
-  mean(spread_draws[[k]] > 0)
-})
-prior_mu_logit <- vegas_preds_spread
-post_map_arcsin <- apply(posterior_predictive_arcsin,2,mean)
-post_sd_arcsin <- apply(posterior_predictive_arcsin,2,sd)
-p_win <- apply(cum_probs_spread,1,max)
-p_lose <- apply(cum_probs_spread,1,min)
-betz <- apply(cum_probs_spread,
-              1,function(x)if(
-                x[1] > x[2]) "favor home team" else "favor away team")
-bet_arcsin <- ifelse((0.909*p_win - p_lose) > cutoff,
-              betz,
-              "don't bet")
-
-################################################################################
-## ## More bet post-processing
-################################################################################
-
-spread_bet <- ifelse((bet_arcsin == bet_raw) & bet_arcsin != "don't bet",
-              bet_arcsin,
-              "don't bet")
-arcsinscale <- cbind(
-  rep(as.character(new_gl_merged$dateGame.x),each = 81),
-  cum_probs_spread,
-  vegas_preds_arcsin,
-  my_preds_expanded,
-  post_map_arcsin,
-  post_sd_arcsin,
-  .909*p_win - 1*p_lose,
-  bet_arcsin,
-  as.character(Sys.time()),
-  final_overunder$HomeTeam,
-  final_overunder$AwayTeam)
-rawscale <- cbind(
-  rep(as.character(new_gl_merged$dateGame.x),each = 81),
-  cum_probs_spread_raw,
-  vegas_preds_spread,
-  my_preds_raw,
-  post_map_raw,
-  post_sd_raw,
-  .909*p_win_raw - 1*p_lose_raw,
-  bet_raw,
-  as.character(Sys.time()),
-  final_overunder$HomeTeam,
-  final_overunder$AwayTeam)
-colnames(arcsinscale) <- c("Date",
-                          "ProbAwayTeamWinsSpread",
-                          "ProbHomeTeamWinsSpread",
-                          "Prior",
-                          "Predicted",
-                          "PostMean",
-                          "PostSD",
-                          "ExpectedProfit",
-                          "Bet",
-                          "DateBet",
-                          "HomeTeam",
-                          "AwayTeam")
-colnames(rawscale) <- colnames(arcsinscale)
-
-# # ## Append predictions and decision rules 
-# past_data <- read.csv("history_of_bets2024_arcsin.csv",
-#                       stringsAsFactors = F)
-# colnames(past_data) <- colnames(arcsinscale)
-# write.csv(unique(rbind(past_data,arcsinscale)),
-#           file = "history_of_bets2023_arcsin.csv",
-#           row.names = F)
-# 
-# past_data <- read.csv("history_of_bets2024_spread.csv",
-#                       stringsAsFactors = F)
-# colnames(past_data) <- colnames(rawscale)
-# write.csv(unique(rbind(past_data,rawscale)),
-#           file = "history_of_bets2024_spread.csv",
-#           row.names = F)
-cat("\n\n-----------------------------------------\n\n")
-
-################################################################################
-## ## Moneyline Bets 
-################################################################################
-
-
-## Probability of winning, based on the posterior-predictive of the spread
-home_team_prob_win <- sapply(1:ncol(posterior_predictive_spread),
-                             function(k){
-                               x <- posterior_predictive_spread[,k]
-                               mean( x > 0.5)
-                             })
-away_team_prob_win <- sapply(1:ncol(posterior_predictive_spread),
-                             function(k){
-                               x <- posterior_predictive_spread[,k]
-                               mean( x < 0.5)
-                             })
-
-## Determine if bets are worth it, based on the odds given and the spread
-moneyline_bets_spread <- foreach(i = 1:length(home_team_prob_win), 
-        .combine = 'rbind') %do% {
-  cutoff_home_team <- uniroot(function(x){
-    if(x < 0){
-      y <- abs(100/x)
-    } else{
-      y <- x / 100
-    }
-    home_team_prob_win[i]*y - 1
-  },
-  interval = c(-2500000,2500000))[[1]]
-  cutoff_away_team <- uniroot(function(x){
-    if(x < 0){
-      y <- abs(100/x)
-    } else{
-      y <- x / 100
-    }
-    away_team_prob_win[i]*y - 1
-  },
-  interval = c(-2500000,2500000))[[1]]
-  ## if the odds are greater than this, we bet
-  return(c(cutoff_home_team, cutoff_away_team))
-}
-
-
-## Repeat for the posterior-predictive of the asin-square root transformed data
-home_team_prob_win <- sapply(1:ncol(posterior_predictive_arcsin),
-                             function(k){
-                               x <- spread_draws[[k]]
-                               mean( x > 0.5)
-                             })
-away_team_prob_win <- sapply(1:ncol(posterior_predictive_arcsin),
-                             function(k){
-                               x <- spread_draws[[k]]
-                               mean( x < 0.5)
-                             })
-moneyline_bets_arcsin <- foreach(i = 1:length(home_team_prob_win), 
-                                 .combine = 'rbind') %do% {
-                                   cutoff_home_team <- uniroot(function(x){
-                                     if(x < 0){
-                                       y <- abs(100/x)
-                                     } else{
-                                       y <- x / 100
-                                     }
-                                     home_team_prob_win[i]*y - 1
-                                   },
-                                   interval = c(-2500000,2500000))[[1]]
-                                   cutoff_away_team <- uniroot(function(x){
-                                     if(x < 0){
-                                       y <- abs(100/x)
-                                     } else{
-                                       y <- x / 100
-                                     }
-                                     away_team_prob_win[i]*y - 1
-                                   },
-                                   interval = c(-2500000,2500000))[[1]]
-                                   ## if the odds are greater than this, we bet
-                                   return(c(cutoff_home_team, cutoff_away_team))
-                                 }
-
-moneyline_bets <- sapply(1:2,function(j){
-  sapply(1:nrow(moneyline_bets_arcsin),function(i){
-    round(max(moneyline_bets_arcsin[i,j],
-        moneyline_bets_spread[i,j]))
+  }
+  cum_probs_spread <- t(sapply(1:length(my_preds_expanded),function(k){
+    c(mean(spread_draws[[k]] > vegas_preds_spread[k]),
+      mean(spread_draws[[k]] <  vegas_preds_spread[k]))
+  }))
+  cum_probs_homewin <- sapply(1:length(my_preds_expanded),function(k){
+    mean(spread_draws[[k]] > 0)
   })
-})
-colnames(moneyline_bets) <- c("Minimum Odds Home", "Minimum Odds Away")
-
-
-################################################################################
-## ## Cleaning
-################################################################################
-
-## final posterior is the unweighted average of log and pts-per-48 
-post_pts <- 0.5*as.numeric(final_overunder$`Posterior Log`) + 
-            0.5*as.numeric(final_overunder$`Posterior Abs`)
-
-## moneyline results
-moneyline_res <- cbind(matchups_enter[rep(1:nrow(matchups_enter),each = 81),
-                                      1:2],
-                       vegas_preds_spread,
-                       home_team_prob_win,
-                       away_team_prob_win,
-                       moneyline_bets)
-
-## spread results
-spread_res <- cbind(matchups_enter[rep(1:nrow(matchups_enter),each = 81),
-                                   1:2],
-                    rawscale[,c('Prior')],
-                    rawscale[,c('PostMean')],
-                    spread_bet)
-
-## over under results
-ou_res <- cbind(matchups_enter[rep(1:nrow(matchups_enter),each = 81),
-                               1:2],
-                final_overunder$`Over/Under`,
-                round(post_pts,2),
-                c(final_bet))
-
-
-colnames(moneyline_res)<- c("AwayTeam",
+  prior_mu_logit <- vegas_preds_spread
+  post_map_arcsin <- apply(posterior_predictive_arcsin,2,mean)
+  post_sd_arcsin <- apply(posterior_predictive_arcsin,2,sd)
+  p_win <- apply(cum_probs_spread,1,max)
+  p_lose <- apply(cum_probs_spread,1,min)
+  betz <- apply(cum_probs_spread,
+                1,function(x)if(
+                  x[1] > x[2]) "favor home team" else "favor away team")
+  bet_arcsin <- ifelse((0.909*p_win - p_lose) > cutoff,
+                       betz,
+                       "don't bet")
+  
+  ################################################################################
+  ## ## More bet post-processing
+  ################################################################################
+  
+  spread_bet <- ifelse((bet_arcsin == bet_raw) & bet_arcsin != "don't bet",
+                       bet_arcsin,
+                       "don't bet")
+  arcsinscale <- cbind(
+    rep(as.character(new_gl_merged$dateGame.x),each = 81),
+    cum_probs_spread,
+    vegas_preds_arcsin,
+    my_preds_expanded,
+    post_map_arcsin,
+    post_sd_arcsin,
+    .909*p_win - 1*p_lose,
+    bet_arcsin,
+    as.character(Sys.time()),
+    final_overunder$HomeTeam,
+    final_overunder$AwayTeam)
+  rawscale <- cbind(
+    rep(as.character(new_gl_merged$dateGame.x),each = 81),
+    cum_probs_spread_raw,
+    vegas_preds_spread,
+    my_preds_raw,
+    post_map_raw,
+    post_sd_raw,
+    .909*p_win_raw - 1*p_lose_raw,
+    bet_raw,
+    as.character(Sys.time()),
+    final_overunder$HomeTeam,
+    final_overunder$AwayTeam)
+  colnames(arcsinscale) <- c("Date",
+                             "ProbAwayTeamWinsSpread",
+                             "ProbHomeTeamWinsSpread",
+                             "Prior",
+                             "Predicted",
+                             "PostMean",
+                             "PostSD",
+                             "ExpectedProfit",
+                             "Bet",
+                             "DateBet",
+                             "HomeTeam",
+                             "AwayTeam")
+  colnames(rawscale) <- colnames(arcsinscale)
+  
+  # # ## Append predictions and decision rules 
+  # past_data <- read.csv("history_of_bets2024_arcsin.csv",
+  #                       stringsAsFactors = F)
+  # colnames(past_data) <- colnames(arcsinscale)
+  # write.csv(unique(rbind(past_data,arcsinscale)),
+  #           file = "history_of_bets2023_arcsin.csv",
+  #           row.names = F)
+  # 
+  # past_data <- read.csv("history_of_bets2024_spread.csv",
+  #                       stringsAsFactors = F)
+  # colnames(past_data) <- colnames(rawscale)
+  # write.csv(unique(rbind(past_data,rawscale)),
+  #           file = "history_of_bets2024_spread.csv",
+  #           row.names = F)
+  cat("\n\n-----------------------------------------\n\n")
+  
+  ################################################################################
+  ## ## Moneyline Bets 
+  ################################################################################
+  
+  
+  ## Probability of winning, based on the posterior-predictive of the spread
+  home_team_prob_win <- sapply(1:ncol(posterior_predictive_spread),
+                               function(k){
+                                 x <- posterior_predictive_spread[,k]
+                                 mean( x > 0.5)
+                               })
+  away_team_prob_win <- sapply(1:ncol(posterior_predictive_spread),
+                               function(k){
+                                 x <- posterior_predictive_spread[,k]
+                                 mean( x < 0.5)
+                               })
+  
+  ## Determine if bets are worth it, based on the odds given and the spread
+  moneyline_bets_spread <- foreach(i = 1:length(home_team_prob_win), 
+                                   .combine = 'rbind') %do% {
+                                     cutoff_home_team <- uniroot(function(x){
+                                       if(x < 0){
+                                         y <- abs(100/x)
+                                       } else{
+                                         y <- x / 100
+                                       }
+                                       home_team_prob_win[i]*y - 1
+                                     },
+                                     interval = c(-2500000,2500000))[[1]]
+                                     cutoff_away_team <- uniroot(function(x){
+                                       if(x < 0){
+                                         y <- abs(100/x)
+                                       } else{
+                                         y <- x / 100
+                                       }
+                                       away_team_prob_win[i]*y - 1
+                                     },
+                                     interval = c(-2500000,2500000))[[1]]
+                                     ## if the odds are greater than this, we bet
+                                     return(c(cutoff_home_team, cutoff_away_team))
+                                   }
+  
+  
+  ## Repeat for the posterior-predictive of the asin-square root transformed data
+  home_team_prob_win <- sapply(1:ncol(posterior_predictive_arcsin),
+                               function(k){
+                                 x <- spread_draws[[k]]
+                                 mean( x > 0.5)
+                               })
+  away_team_prob_win <- sapply(1:ncol(posterior_predictive_arcsin),
+                               function(k){
+                                 x <- spread_draws[[k]]
+                                 mean( x < 0.5)
+                               })
+  moneyline_bets_arcsin <- foreach(i = 1:length(home_team_prob_win), 
+                                   .combine = 'rbind') %do% {
+                                     cutoff_home_team <- uniroot(function(x){
+                                       if(x < 0){
+                                         y <- abs(100/x)
+                                       } else{
+                                         y <- x / 100
+                                       }
+                                       home_team_prob_win[i]*y - 1
+                                     },
+                                     interval = c(-2500000,2500000))[[1]]
+                                     cutoff_away_team <- uniroot(function(x){
+                                       if(x < 0){
+                                         y <- abs(100/x)
+                                       } else{
+                                         y <- x / 100
+                                       }
+                                       away_team_prob_win[i]*y - 1
+                                     },
+                                     interval = c(-2500000,2500000))[[1]]
+                                     ## if the odds are greater than this, we bet
+                                     return(c(cutoff_home_team, cutoff_away_team))
+                                   }
+  
+  moneyline_bets <- sapply(1:2,function(j){
+    sapply(1:nrow(moneyline_bets_arcsin),function(i){
+      round(max(moneyline_bets_arcsin[i,j],
+                moneyline_bets_spread[i,j]))
+    })
+  })
+  colnames(moneyline_bets) <- c("Minimum Odds Home", "Minimum Odds Away")
+  
+  
+  ################################################################################
+  ## ## Cleaning
+  ################################################################################
+  
+  ## final posterior is the unweighted average of log and pts-per-48 
+  post_pts <- 0.5*as.numeric(final_overunder$`Posterior Log`) + 
+    0.5*as.numeric(final_overunder$`Posterior Abs`)
+  
+  ## moneyline results
+  moneyline_res <- cbind(matchups_enter[rep(1:nrow(matchups_enter),each = 81),
+                                        1:2],
+                         vegas_preds_spread,
+                         home_team_prob_win,
+                         away_team_prob_win,
+                         moneyline_bets)
+  
+  ## spread results
+  spread_res <- cbind(matchups_enter[rep(1:nrow(matchups_enter),each = 81),
+                                     1:2],
+                      rawscale[,c('Prior')],
+                      rawscale[,c('PostMean')],
+                      spread_bet)
+  
+  ## over under results
+  ou_res <- cbind(matchups_enter[rep(1:nrow(matchups_enter),each = 81),
+                                 1:2],
+                  final_overunder$`Over/Under`,
+                  round(post_pts,2),
+                  c(final_bet))
+  
+  
+  colnames(moneyline_res)<- c("AwayTeam",
+                              "HomeTeam",
+                              "VegasSpread",
+                              "PredictedProbHomeTeamWins",
+                              "PredictedProbAwayTeamWins",
+                              "MinimumOddsForBettingOnHome",
+                              "MinumumOddsForBettingOnAway")
+  colnames(ou_res) <- c("AwayTeam",
+                        "HomeTeam",
+                        "VegasOverUnder",
+                        "PredictedTotalPointsScored",
+                        "BetOverOrUnder?")
+  colnames(spread_res) <- c("AwayTeam",
                             "HomeTeam",
                             "VegasSpread",
-                            "PredictedProbHomeTeamWins",
-                            "PredictedProbAwayTeamWins",
-                            "MinimumOddsForBettingOnHome",
-                            "MinumumOddsForBettingOnAway")
-colnames(ou_res) <- c("AwayTeam",
-                      "HomeTeam",
-                      "VegasOverUnder",
-                      "PredictedTotalPointsScored",
-                      "BetOverOrUnder?")
-colnames(spread_res) <- c("AwayTeam",
-                          "HomeTeam",
-                          "VegasSpread",
-                          "PredictedSpread",
-                          "BetAwayOrHomeTeamOnSpread?")
-
-## Post-hoc fix: for gaps/inconsistencies in over under bets
-## Because posterior-decision rules are approximations, sometimes we have 
-## alternating pro bets/anti bets: take the mot conservative approach here,
-## replacing any pro bets less extreme than the anti bet as another anti bet
-for(i in 2:(nrow(ou_res)-1)){
-  ## if entry above and below bet, you bet: 
-  ## if entry above and below don't bet, don't bet
-  if( (ou_res[i, ncol(ou_res)] != ou_res[i+1, ncol(ou_res)]) &
-      (ou_res[i-1, ncol(ou_res)] == ou_res[i+1, ncol(ou_res)])){
-    ou_res[i, ncol(ou_res)] <-  ou_res[i+1, ncol(ou_res)]
+                            "PredictedSpread",
+                            "BetAwayOrHomeTeamOnSpread?")
+  
+  ## Post-hoc fix: for gaps/inconsistencies in over under bets
+  ## Because posterior-decision rules are approximations, sometimes we have 
+  ## alternating pro bets/anti bets: take the mot conservative approach here,
+  ## replacing any pro bets less extreme than the anti bet as another anti bet
+  for(i in 2:(nrow(ou_res)-1)){
+    ## if entry above and below bet, you bet: 
+    ## if entry above and below don't bet, don't bet
+    if( (ou_res[i, ncol(ou_res)] != ou_res[i+1, ncol(ou_res)]) &
+        (ou_res[i-1, ncol(ou_res)] == ou_res[i+1, ncol(ou_res)])){
+      ou_res[i, ncol(ou_res)] <-  ou_res[i+1, ncol(ou_res)]
+    }
   }
-}
-## fix it: for gaps in spread bets
-for(i in 2:(nrow(spread_res)-1)){
-  ## if entry above and below bet, you bet: 
-  ## if entry above and below don't bet, don't bet
-  if( (spread_res[i, ncol(spread_res)] != spread_res[i+1, ncol(spread_res)]) &
-      (spread_res[i-1, ncol(spread_res)] == spread_res[i+1, ncol(spread_res)])){
-    spread_res[i, ncol(spread_res)] <-  spread_res[i+1, ncol(spread_res)]
+  ## fix it: for gaps in spread bets
+  for(i in 2:(nrow(spread_res)-1)){
+    ## if entry above and below bet, you bet: 
+    ## if entry above and below don't bet, don't bet
+    if( (spread_res[i, ncol(spread_res)] != spread_res[i+1, ncol(spread_res)]) &
+        (spread_res[i-1, ncol(spread_res)] == spread_res[i+1, ncol(spread_res)])){
+      spread_res[i, ncol(spread_res)] <-  spread_res[i+1, ncol(spread_res)]
+    }
   }
+  
+  ################################################################################
+  ## Write results to csv files
+  ################################################################################
+  
+  write.csv(moneyline_res,file = "MoneyLineBets.csv",row.names = F)
+  write.csv(spread_res,file = "SpreadBets.csv",row.names = F)
+  write.csv(ou_res,file = "OverUnderBets.csv", row.names = F)
+  nd <- Sys.time()
+  print(nd - strt)
+  
 }
-
-################################################################################
-## Write results to ccv files
-################################################################################
-
-write.csv(moneyline_res,file = "MoneyLineBets.csv",row.names = F)
-write.csv(spread_res,file = "SpreadBets.csv",row.names = F)
-write.csv(ou_res,file = "OverUnderBets.csv", row.names = F)
-nd <- Sys.time()
-print(nd - strt)
-
-
-}
-
-
