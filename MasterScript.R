@@ -1,32 +1,32 @@
 ## Automatically upload data from the previous-night's games
 rm(list = ls())
-dir_prefix <- 'C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles'
+dir_prefix <- 'C:/Users/matth/Documents/AbsolutelyStackedSupplementaryFiles'
 setwd(dir_prefix)
 prep_data_only <- T
 update_matchups <- F
-source(paste0(dir_prefix, '/PredictAndLoadNBA_2024.R'))
+source(paste0(dir_prefix, '/PredictAndLoadNBA_2025.R'))
 
 ## Construct features from the raw data, prepare in a format suitable for model fitting
 rm(list = ls())
-dir_prefix <- 'C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles'
+dir_prefix <- 'C:/Users/matth/Documents/AbsolutelyStackedSupplementaryFiles'
 source(paste0(dir_prefix, '/PrepDataForNBA.R'))
 
 ## Fit base learners, stacked models, and obtain posteriors for variance components
 rm(list = ls())
-dir_prefix <- 'C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles'
+dir_prefix <- 'C:/Users/matth/Documents/AbsolutelyStackedSupplementaryFiles'
 source(paste0(dir_prefix, '/FitStackedModels.R'))
 
 ## Make predictions and decisions on bets
 rm(list = ls())
-dir_prefix <- 'C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles'
+dir_prefix <- 'C:/Users/matth/Documents/AbsolutelyStackedSupplementaryFiles'
 setwd(dir_prefix)
 prep_data_only <- F
 update_matchups <- T
-source(paste0(dir_prefix, '/PredictAndLoadNBA_2024.R'))
+source(paste0(dir_prefix, '/PredictAndLoadNBA_2025.R'))
 
 ## Process the raw output of decision rules into a more user-friendly format
 library(foreach)
-dir_prefix <- 'C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles'
+dir_prefix <- 'C:/Users/matth/Documents/AbsolutelyStackedSupplementaryFiles'
 dat_spread <- read.csv(paste0(dir_prefix, '/SpreadBets.csv'))
 dat_ou <- read.csv(paste0(dir_prefix, '/OverUnderBets.csv'))
 newspread <- foreach(team = unique(dat_spread$AwayTeam),
@@ -71,6 +71,35 @@ write.csv(newspread,
 write.csv(newou, file = 
             paste0(dir_prefix, '/NewOverUnderBets.csv'),
           row.names = F)
+
+
+################################################################################
+
+## Email my decision rules
+library(emayili)
+library(dplyr)
+
+email <- envelope() %>%
+  from("<>") %>%
+  to("<>") %>%
+  subject("Today's Recommended Bets") %>%
+  text("Hello. I've attached the bets recommended by my program below. 
+       As a reminder, the program cannot take into account off-court injuries, 
+       recent trades, injuries, or drama. Bet at your own discretion.") %>%
+  attachment("Today's Recommended Bets are Included Here.",
+             path = paste0(dir_prefix, "/MoneyLineBets.csv"),
+             name = "MoneyLineBets.csv") %>% 
+  attachment("Today's Recommended Bets are Included Here.",
+             path = paste0(dir_prefix, "/NewSpreadBets.csv"),
+             name = "SpreadBets.csv") %>% 
+  attachment("Today's Recommended Bets are Included Here.",
+             path = paste0(dir_prefix, "/NewOverUnderBets.csv"),
+             name = "OverUnderBets.csv")
+smtp <- server(host = "smtp.gmail.com",
+               port = 465,
+               username = "<>",
+               password = "<>")
+smtp(email, verbose = F)
 
 ################################################################################
 
@@ -164,16 +193,18 @@ extract_betting_lines <- function(games_data, team_abbrev) {
     home_team_full <- games_data$home_team[i]
     commence_time <- games_data$commence_time[i]
     
-    ## Convert to abbreviations
+    # Convert to abbreviations
     away_team <- team_abbrev[away_team_full]
     home_team <- team_abbrev[home_team_full]
     
     if (is.na(away_team) || is.na(home_team)) {
-      cat("Warning: Could not find abbreviation for", away_team_full, "or", home_team_full, "\n")
+      cat("Warning: Could not find abbreviation for", 
+          away_team_full, "or", 
+          home_team_full, "\n")
       next
     }
     
-    ## Extract from first bookmaker
+    # Extract from first bookmaker
     bookmakers <- games_data$bookmakers[[i]]
     if (is.null(bookmakers) || nrow(bookmakers) == 0) {
       cat("No bookmaker data for", away_team, "@", home_team, "\n")
@@ -181,13 +212,13 @@ extract_betting_lines <- function(games_data, team_abbrev) {
     }
     markets <- bookmakers$markets[[1]]
     
-    ## Initialize
+    # Initialize
     home_spread <- NA
     total_points <- NA
     vegas_prob_home <- NA
     vegas_prob_away <- NA
     
-    ## Get spreads
+    # Get spreads
     spread_idx <- which(markets$key == "spreads")
     if (length(spread_idx) > 0) {
       outcomes <- markets$outcomes[[spread_idx]]
@@ -199,7 +230,7 @@ extract_betting_lines <- function(games_data, team_abbrev) {
       }
     }
     
-    ## Get moneyline (h2h) for implied probabilities
+    # Get moneyline (h2h) for implied probabilities
     h2h_idx <- which(markets$key == "h2h")
     if (length(h2h_idx) > 0) {
       outcomes <- markets$outcomes[[h2h_idx]]
@@ -211,7 +242,7 @@ extract_betting_lines <- function(games_data, team_abbrev) {
       }
     }
     
-    ## Get totals (over/under)
+    # Get totals (over/under)
     totals_idx <- which(markets$key == "totals")
     if (length(totals_idx) > 0) {
       total_outcome <- markets$outcomes[[totals_idx]]
@@ -233,6 +264,9 @@ extract_betting_lines <- function(games_data, team_abbrev) {
   }
   
   result_df <- do.call(rbind, results)
+  
+  cat("Found", nrow(result_df), "games with odds\n")
+  
   return(result_df)
 }
 
@@ -273,25 +307,25 @@ update_history <- function(api_key, dir_prefix, team_abbrev) {
   for (i in 1:nrow(vegas_lines)) {
     game <- vegas_lines[i, ]
     
-    ## Find matching predictions for spread
+    # Find matching predictions for spread
     spread_match <- dat_spread[
-      dat_spread$AwayTeam == game$AwayTeam & 
-        dat_spread$HomeTeam == game$HomeTeam &
+      dat_spread$HomeTeam == game$HomeTeam & 
+        dat_spread$AwayTeam == game$AwayTeam &
         abs(dat_spread$VegasSpread - game$VegasSpread) < 0.6,
       ,
       drop=FALSE
-    ]
+    ][1,,drop=FALSE]
     
-    ## Find matching predictions for O/U
+    # Find matching predictions for O/U
     ou_match <- dat_ou[
       dat_ou$AwayTeam == game$AwayTeam & 
         dat_ou$HomeTeam == game$HomeTeam &
         abs(dat_ou$VegasOverUnder - game$VegasOverUnder) < 0.6,
       ,
       drop=FALSE
-    ]
+    ][1,,drop=FALSE]
     
-    ## Find matching moneyline predictions (same tolerance for spread and O/U)
+    # Find matching moneyline predictions (same tolerance for spread and O/U)
     if (has_moneyline) {
       ml_match <- dat_ml[
         dat_ml$AwayTeam == game$AwayTeam & 
@@ -299,7 +333,7 @@ update_history <- function(api_key, dir_prefix, team_abbrev) {
           abs(dat_ml$VegasSpread - game$VegasSpread) < 0.6,
         ,
         drop=FALSE
-      ]
+      ][1,,drop=FALSE]
       
       if (nrow(ml_match) > 0) {
         new_moneyline <- rbind(new_moneyline, ml_match[1,,drop=FALSE])
@@ -308,7 +342,7 @@ update_history <- function(api_key, dir_prefix, team_abbrev) {
     
     if (nrow(spread_match) > 0 && nrow(ou_match) > 0) {
       
-      ## Get probability estimates from moneyline file if available
+      # Get probability estimates from moneyline file if available
       prob_home <- NA
       prob_away <- NA
       
@@ -337,11 +371,6 @@ update_history <- function(api_key, dir_prefix, team_abbrev) {
     return(data.frame())
   }
   
-  ## Save filtered moneyline bets
-  if (has_moneyline && nrow(new_moneyline) > 0) {
-    new_ml_file <- paste0(dir_prefix, '/NewMoneyLineBets.csv')
-    write.csv(new_moneyline, new_ml_file, row.names = FALSE)
-  }
   
   ## Append to history file (create if doesn't exist)
   history_file <- paste0(dir_prefix, '/history.csv')
@@ -350,7 +379,8 @@ update_history <- function(api_key, dir_prefix, team_abbrev) {
     existing <- read.csv(history_file)
     history <- rbind(existing, history)
     # Remove duplicates (same game on same date)
-    history <- history[!duplicated(history[, c("Date", "AwayTeam", "HomeTeam")]), ]
+    history <- history[!duplicated(
+      history[, c("Date", "AwayTeam", "HomeTeam")]), ]
   }
   
   write.csv(history, history_file, row.names = FALSE)
@@ -362,54 +392,3 @@ update_history <- function(api_key, dir_prefix, team_abbrev) {
 try({
   today_history <- update_history(api_key, dir_prefix, team_abbrev)
   }, silent=TRUE)
-
-################################################################################
-
-
-## Email my decision rules to me and my friend
-library(emayili)
-library(dplyr)
-
-# email <- envelope() %>%
-#   from("matthewlouisdavis@gmail.com") %>%
-#   to("myfriendwhogambles1776@gmail.com") %>%
-#   subject("Today's Recommended Bets") %>%
-#   text("Good afternon, here are my program's recommended bets.") %>%
-#   attachment("Today's Recommended Bets are Included Here.",
-#              path = "C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles/MoneyLineBets.csv",
-#              name = "MoneyLineBets.csv") %>%
-#   attachment("Today's Recommended Bets are Included Here.",
-#              path = "C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles/NewSpreadBets.csv",
-#              name = "SpreadBets.csv") %>%
-#   attachment("Today's Recommended Bets are Included Here.",
-#              path = "C:/Users/defgi/Documents/AbsolutelyStackedSupplementaryFiles/NewOverUnderBets.csv",
-#              name = "OverUnderBets.csv")
-# smtp <- server(host = "smtp.gmail.com",
-#                port = 465,
-#                username = "matthewlouisdavis@gmail.com",
-#                password = "<>")
-# smtp(email, verbose = F)
-# rm(list = ls())
-
-email <- envelope() %>%
-  from("matthewlouisdavis@gmail.com") %>%
-  to("matthewlouisdavis@gmail.com") %>%
-  subject("Today's Recommended Bets") %>%
-  text("Hello. I've attached the bets recommended by my program below. 
-       As a reminder, the program cannot take into account off-court injuries, 
-       recent trades, injuries, or drama. Bet at your own discretion.") %>%
-  attachment("Today's Recommended Bets are Included Here.",
-             path = paste0(dir_prefix, "/MoneyLineBets.csv"),
-             name = "MoneyLineBets.csv") %>% 
-  attachment("Today's Recommended Bets are Included Here.",
-             path = paste0(dir_prefix, "/NewSpreadBets.csv"),
-             name = "SpreadBets.csv") %>% 
-  attachment("Today's Recommended Bets are Included Here.",
-             path = paste0(dir_prefix, "/NewOverUnderBets.csv"),
-             name = "OverUnderBets.csv")
-smtp <- server(host = "smtp.gmail.com",
-               port = 465,
-               username = "matthewlouisdavis@gmail.com",
-               password = "<>")
-
-smtp(email, verbose = F)
