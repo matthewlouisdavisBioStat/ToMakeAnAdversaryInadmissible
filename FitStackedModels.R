@@ -523,7 +523,9 @@ for (ijk in c(1, 2, 3, 4, 5)) {
                            glmnet_ptsGame1,
                            glmnet_log1,
                            xgb_ptsGame1,
-                           EarthModel(degree = 3, nprune = 250),
+                           xgb_log1,
+                           xgb_log2,
+                           EarthModel(degree = 2, nprune = 250),
                            model = make_glmerStackedModel(
                              link = "linear",
                              incl_random_efx = TRUE,
@@ -544,7 +546,7 @@ for (ijk in c(1, 2, 3, 4, 5)) {
     stacked_stan <- try({stacked_model %>%
       quantify_stacked_uncertainty(
         return_fit = FALSE,
-        iter = 10000,
+        iter = 16000,
         warmup = 1000, 
         cores = 2,
         take_a_break_first = FALSE,
@@ -592,13 +594,13 @@ for (ijk in c(1, 2, 3, 4, 5)) {
                            glmnet_ptsGame1,
                            glmnet_log1,
                            xgb_ptsGame1,
-                           EarthModel(degree = 3, nprune = 250),
+                           EarthModel(degree = 3, nprune = 216),
                            model = make_glmerStackedModel(
                              link = "log",
                              incl_random_efx = TRUE,
                              tau_0 = 1,
                              est_dispersion = TRUE,
-                             min_learners = 3,
+                             min_learners = 2,
                              Z = Z,
                              sigma_list = sigma_list,
                              use_qp = TRUE 
@@ -611,7 +613,7 @@ for (ijk in c(1, 2, 3, 4, 5)) {
     stacked_stan <- try({stacked_model %>%
         quantify_stacked_uncertainty(
         return_fit = FALSE,
-        iter = 10000,
+        iter = 16000,
         warmup = 1000,
         take_a_break_first = TRUE,
         cores = 2,
@@ -679,7 +681,7 @@ for (ijk in c(1, 2, 3, 4, 5)) {
     stacked_stan <- try({stacked_model %>%
       quantify_stacked_uncertainty(
         return_fit = FALSE,
-        iter = 10000,
+        iter = 16000,
         warmup = 1000,
         cores = 2,
         take_a_break_first = FALSE,
@@ -728,12 +730,13 @@ for (ijk in c(1, 2, 3, 4, 5)) {
                            xgb_spread1, 
                            xgb_arcsin1,
                            EarthModel(degree = 3, nprune = 216),
+                           EarthModel(degree = 2, nprune = 250),
                            model = make_glmerStackedModel(
                              link = "linear",
                              incl_random_efx = TRUE,
                              tau_0 = 1,
                              est_dispersion = TRUE,
-                             min_learners = 3,
+                             min_learners = 2,
                              Z = Z,
                              sigma_list = sigma_list,
                              use_qp = TRUE,
@@ -748,7 +751,7 @@ for (ijk in c(1, 2, 3, 4, 5)) {
     stacked_stan <- try({stacked_model %>%
       quantify_stacked_uncertainty(
         return_fit = FALSE, 
-        iter = 10000,
+        iter = 16000,
         warmup = 1000,
         cores = 2,
         take_a_break_first = TRUE,
@@ -790,7 +793,7 @@ for (ijk in c(1, 2, 3, 4, 5)) {
     
     stacked_model <- fit(rec,
                          model = SuperModel(
-                           glmnet_arcsin1,
+                           glmnet_arcsin2,
                            xgb_arcsin1,
                            EarthModel(degree = 3, nprune = 216),
                            model = make_glmerStackedModel(
@@ -798,7 +801,7 @@ for (ijk in c(1, 2, 3, 4, 5)) {
                              incl_random_efx = TRUE,
                              tau_0 = 1,
                              est_dispersion = TRUE,
-                             min_learners = 3,
+                             min_learners = 2,
                              Z = Z,
                              sigma_list = sigma_list,
                              use_qp = TRUE,
@@ -813,7 +816,7 @@ for (ijk in c(1, 2, 3, 4, 5)) {
     stacked_stan <- try({stacked_model %>%
         quantify_stacked_uncertainty(
           return_fit = FALSE, 
-          iter = 10000,
+          iter = 16000,
           warmup = 1000,
           cores = 2,
           take_a_break_first = TRUE,
