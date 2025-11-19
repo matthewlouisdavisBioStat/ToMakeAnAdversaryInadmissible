@@ -28,7 +28,7 @@ options(curl_interrupt = TRUE)
 
 #load('bs_playoffs.RData')
 lag <- lag_og
-years <- 2014:2025
+years <- 2014:2026
 
 ## playoff games
 # gl <- game_logs(years[years != 2023], result_types = 'team',
@@ -54,6 +54,30 @@ table(gl$typeSeason)
 
 load('bs.RData')
 bs <- rbind(bs)
+## impute these variables to be equal to be the average of median and mean of non-0 entries
+# when equal to 0, when tracking data is missing
+mean_median_impute <- c(
+  'touches',
+  'trebChances',
+  'drebChances',
+  'orebChances',
+  'distMiles',
+  'pctFGRimDefended',
+  'fgaRimDefended',
+  'fgmRimDefended',
+  'pctFGUncontested',
+  'fgaUncontested',
+  'fgmUncontested',
+  'pctFGContested',
+  'fgaContested',
+  'fgmContested',
+  'passes'
+)
+rws <- which(rowMeans(abs(bs[,mean_median_impute])) == 0)
+bs[rws, mean_median_impute] <- 
+  0.5*apply(bs[-rws, mean_median_impute], 2, mean, na.rm = TRUE) + 
+  0.5*apply(bs[-rws, mean_median_impute], 2, median, na.rm = TRUE)
+
 
 ids <- unique(gl$idGame)
 start <- Sys.time()
@@ -184,15 +208,17 @@ average_vars <- unique(c(paste0(vars,"PerMinute"),
                          'outcomeOpp',
                          'spread',
                          edit_vars))
-##
+## More transforms
 gl$logpts <- log(gl$ptsTeam)
 gl$sqrtpts <- 2*sqrt(gl$ptsTeam + 3/8)
 
-## Optimal weighting parameters
-alpha0 <- 0.02458456
-beta0 <- 0.02132673
-gamma0 <- -0.19484078
 
+## Optimal weighting parameters
+alpha0 <- .09772250  
+beta0 <- .05226559 
+gamma0 <- -0.26998223
+
+## In parallel
 cl <- makeCluster(round(length(years)))
 registerDoParallel(cl)
 clusterExport(cl,ls())
@@ -505,7 +531,8 @@ for(i in 1:nrow(df)){
   date <- unique(gl$dateGame[gl$idGame == new_gl_merged$nextGameID[i]])
   rownames(df)[i] <- paste0(i,":",away_team,"at",home_team,"_",date)
 }
-df <- na.omit(df)
+nas <- apply(df, 2, function(x)mean(is.na(x)))
+df <- na.omit(df[,-which(nas > 0.9)])
 rownames <- rownames(df)
 
 ## Final merge, removing NAs
@@ -678,8 +705,9 @@ years2keep <-
     '2021',
     '2022',
     '2023',
-    '2024'#,
-    #'2025' # baseline
+    '2024',
+    '2025',
+    '2026'
   )
 yrz <- foreach(year = years2keep,
                .combine = 'cbind') %do% {
@@ -692,4 +720,3 @@ df <- bind_cols(df,yrz)
 df <- df[,(apply(df,2,function(x)mean(is.na(x))) == 0)]
 df <- df[,(apply(df,2,function(x)length(unique(x)) > 1))]
 save(df,outcome_vars,file = "recipes.RData")
-
