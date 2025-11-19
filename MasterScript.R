@@ -4,7 +4,7 @@ dir_prefix <- 'C:/Users/matth/Documents/AbsolutelyStackedSupplementaryFiles'
 setwd(dir_prefix)
 prep_data_only <- T
 update_matchups <- F
-source(paste0(dir_prefix, '/PredictAndLoadNBA_2025.R'))
+source(paste0(dir_prefix, '/PredictAndLoadNBA_2024.R'))
 
 ## Construct features from the raw data, prepare in a format suitable for model fitting
 rm(list = ls())
@@ -22,7 +22,7 @@ dir_prefix <- 'C:/Users/matth/Documents/AbsolutelyStackedSupplementaryFiles'
 setwd(dir_prefix)
 prep_data_only <- F
 update_matchups <- T
-source(paste0(dir_prefix, '/PredictAndLoadNBA_2025.R'))
+source(paste0(dir_prefix, '/PredictAndLoadNBA_2024.R'))
 
 ## Process the raw output of decision rules into a more user-friendly format
 library(foreach)
@@ -392,3 +392,4 @@ update_history <- function(api_key, dir_prefix, team_abbrev) {
 try({
   today_history <- update_history(api_key, dir_prefix, team_abbrev)
   }, silent=TRUE)
+
