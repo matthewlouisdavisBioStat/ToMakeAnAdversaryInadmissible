@@ -430,10 +430,8 @@ if(length(ids) > 0) {
   print(paste("Saved", length(unique(bs$idGame)), "games to bs.RData"))
 }
 
-## impute these variables to be equal to be the average of median and mean of non-0 entries
-# when equal to 0, when tracking data is missing
-# affects very few entries overall
-mean_median_impute <- c(
+# affects very few entries overall, sometimes fails to be populated
+tracking <- c(
   'touches',
   'trebChances',
   'drebChances',
@@ -450,13 +448,13 @@ mean_median_impute <- c(
   'fgmContested',
   'passes'
 )
-rws <- which(rowMeans(abs(bs[,mean_median_impute])) == 0)
-bs[rws, mean_median_impute] <- apply(bs[-rws,mean_median_impute], 2, median, na.rm = TRUE)*0.5 + 
-                               apply(bs[-rws,mean_median_impute], 2, mean, na.rm = TRUE)*0.5
+
+## remove missing values for tracking data
+rws <- which(rowMeans(abs(bs[,tracking])) == 0)
+bs <- bs[-rws,]
 
 ## Minimum number of games played by a team this season
 min(table(bs$slugTeam[bs$idGame %in% gl$idGame[gl$yearSeason == 2026]]))
-
 
 ################################################################################
 ## ## Feature Engineering
@@ -1853,7 +1851,7 @@ if(any(ot_preds < 0)){
   }
   
   ################################################################################
-  ## Write results to csv files
+  ## Write results to ccv files
   ################################################################################
   
   write.csv(moneyline_res,file = "MoneyLineBets.csv",row.names = F)
