@@ -366,11 +366,16 @@ pull_boxscore_v3 <- function(game_id) {
 ################################################################################
 ## ## Pull new box scores using V3 API
 ################################################################################
-
-ids <- ids[!(ids %in% bs$idGame) & (ids != 42000306)]
+# when tracking data is missing
+load('ids_to_redo.RData')
+bs <- bs[!(bs$idGame %in% bad_ids),]
+# pull the new entries
+ids <- unique(c(ids[!(ids %in% bs$idGame) & substr(ids, 1, 1) != 4],
+                bad_ids[!(bad_ids %in% bs$idGame) & substr(bad_ids, 1, 1) != 4]))
 if(max(table(bs$idGame)) > 2){
   stop("duplicated ids")
 }
+
 if(length(ids) > 0) {
   for (id in ids[1:min(length(ids), 98)]) {
     print(paste(grep(id, ids), length(ids), sep = "/"))
@@ -449,9 +454,13 @@ tracking <- c(
   'passes'
 )
 
-## remove missing values for tracking data
-rws <- which(rowMeans(abs(bs[,tracking])) == 0)
-bs <- bs[-rws,]
+## check tracking data, set to NA if not populated yet
+rws <- which(rowSums(abs(bs[,tracking])) == 0 & bs$idGame >= 22500070)
+if(length(rws) > 0){
+  bs[rws, tracking] <- NA
+  bad_ids <- unique(bs$idGame[rws])
+  save(bad_ids, file = 'ids_to_redo.RData')
+}
 
 ## Minimum number of games played by a team this season
 min(table(bs$slugTeam[bs$idGame %in% gl$idGame[gl$yearSeason == 2026]]))
@@ -459,10 +468,6 @@ min(table(bs$slugTeam[bs$idGame %in% gl$idGame[gl$yearSeason == 2026]]))
 ################################################################################
 ## ## Feature Engineering
 ################################################################################
-
-## making an indicator for before and after 2017, before and after 2022
-gl$before_or_after_2017 <- as.numeric(gl$yearSeason >= 2017)
-gl$before_or_after_2022 <- as.numeric(gl$yearSeason >= 2022)
 
 ## optional, if training on playoff data is considered
 gl$is_playoff_game <- as.numeric(gl$typeSeason == "Playoffs")
@@ -580,9 +585,9 @@ gl$logpts <- log(gl$ptsTeam)
 gl$sqrtpts <- 2*sqrt(gl$ptsTeam + 3/8)
 
 ## Optimal weighting parameters
-alpha0 <- .09772250  
-beta0 <- .05226559 
-gamma0 <- -0.26998223
+alpha0 <- 0.08528202
+beta0 <- 0.06577964 
+gamma0 <- -0.25575404
 
 gl <- gl[gl$dateGame <= date,]
 for(year in years){
@@ -665,7 +670,7 @@ for(year in years){
             w,
             na.rm = TRUE)
           
-          ## drop-off of last-two available game's data versus weighted average
+          ## drop-off of last available game data versus weighted average
           dataLG[i,var] <- as.numeric(na.omit(unlist(data[i:1,var])))[1] -
             datatemp[i,var]
         }
